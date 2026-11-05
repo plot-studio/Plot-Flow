@@ -1,6 +1,6 @@
 use crate::audio_toolkit::{
-    apply_custom_words, detect_output_language, normalize_transcription_output,
-    remove_filler_words, OutputLanguageEvidence,
+    apply_custom_words, boost_quiet_audio, detect_output_language,
+    normalize_transcription_output, plan_chunks, remove_filler_words, OutputLanguageEvidence,
 };
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
@@ -1195,6 +1195,16 @@ impl TranscriptionManager {
             return Ok(String::new());
         }
 
+        // A microphone left at a low level yields a recording the model can
+        // barely hear; lift it before recognition (the saved WAV is untouched).
+        let mut audio = audio;
+        if get_settings(&self.app_handle).auto_mic_gain {
+            if let Some(gain) = boost_quiet_audio(&mut audio) {
+                debug!("Quiet recording boosted {gain:.1}x before transcription");
+            }
+        }
+        let audio = audio;
+
         // Check if model is loaded, if not try to load it
         {
             // If the model is loading, wait for it to complete.
@@ -1246,6 +1256,10 @@ impl TranscriptionManager {
         // with INVALID_ARG, so the whisper extension must be gated on the
         // arch, not on the feature (see #1601).
         let mut model_is_whisper = false;
+        // Longest audio the loaded transcribe-cpp model accepts in one run
+        // (0 = unlimited). GigaAM reports ~25 s; longer input is split at
+        // pauses — see `run_transcribe_cpp_windowed`.
+        let mut model_max_audio_ms: i64 = 0;
 
         // Perform transcription with the appropriate engine.
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
@@ -1287,6 +1301,7 @@ impl TranscriptionManager {
                 let caps = model.capabilities();
                 model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
                 model_is_whisper = model.arch() == "whisper";
+                model_max_audio_ms = caps.max_audio_ms;
                 model_supports_translate = caps.supports_translate;
                 model_languages = caps.languages;
                 debug!(
@@ -1340,17 +1355,19 @@ impl TranscriptionManager {
                             run_options.family.is_some()
                         );
 
-                        session
-                            .run(&audio, &run_options)
-                            .map(|t| {
-                                // Whisper's audio-based LID (auto mode only;
-                                // `None` when a language hint was passed).
-                                model_detected_language = t.language;
-                                t.text
-                            })
-                            .map_err(|e| {
-                                anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
-                            })
+                        run_transcribe_cpp_windowed(
+                            session,
+                            &audio,
+                            &run_options,
+                            model_max_audio_ms,
+                        )
+                        .map(|(text, language)| {
+                            // Whisper's audio-based LID (auto mode only;
+                            // `None` when a language hint was passed).
+                            model_detected_language = language;
+                            text
+                        })
+                        .map_err(|e| anyhow::anyhow!("transcribe-cpp transcription failed: {}", e))
                     }
                     LoadedEngine::Parakeet(parakeet_engine) => {
                         let params = ParakeetParams {
@@ -1533,6 +1550,58 @@ impl TranscriptionManager {
 
         Ok(final_result)
     }
+}
+
+/// Run a transcribe-cpp session over `audio`, splitting it at pauses when it
+/// exceeds the model's advertised window (`max_audio_ms`, 0 = unlimited).
+///
+/// GigaAM is trained on ≤25 s utterances; fed a 90 s dictation in one go it
+/// returns garbled text (the library logs a warning and carries on). Each
+/// chunk is transcribed separately and the texts are joined with a space.
+/// The language comes from the first chunk that reports one.
+fn run_transcribe_cpp_windowed(
+    session: &mut Session,
+    audio: &[f32],
+    options: &RunOptions,
+    max_audio_ms: i64,
+) -> std::result::Result<(String, Option<String>), transcribe_cpp::Error> {
+    const SAMPLE_RATE: usize = 16_000;
+    let audio_ms = (audio.len() as i64) * 1000 / SAMPLE_RATE as i64;
+    if max_audio_ms <= 0 || audio_ms <= max_audio_ms {
+        let t = session.run(audio, options)?;
+        return Ok((t.text, t.language));
+    }
+
+    let ranges = plan_chunks(audio, SAMPLE_RATE, max_audio_ms as u64);
+    info!(
+        "Audio of {:.1}s exceeds the model window of {:.1}s; transcribing {} chunks",
+        audio_ms as f64 / 1000.0,
+        max_audio_ms as f64 / 1000.0,
+        ranges.len()
+    );
+
+    let mut texts: Vec<String> = Vec::with_capacity(ranges.len());
+    let mut language: Option<String> = None;
+    for (index, range) in ranges.iter().enumerate() {
+        let started = Instant::now();
+        let t = session.run(&audio[range.clone()], options)?;
+        debug!(
+            "chunk {}/{}: {:.1}s of audio -> {} chars in {:?}",
+            index + 1,
+            ranges.len(),
+            range.len() as f64 / SAMPLE_RATE as f64,
+            t.text.chars().count(),
+            started.elapsed()
+        );
+        if language.is_none() {
+            language = t.language;
+        }
+        let trimmed = t.text.trim();
+        if !trimmed.is_empty() {
+            texts.push(trimmed.to_string());
+        }
+    }
+    Ok((texts.join(" "), language))
 }
 
 struct StreamPerf {

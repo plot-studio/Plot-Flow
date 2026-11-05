@@ -709,6 +709,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_vad_enabled_setting,
             shortcut::change_vad_backend_setting,
             shortcut::change_filler_word_removal_enabled_setting,
+            shortcut::change_auto_mic_gain_setting,
             shortcut::change_app_language_setting,
             shortcut::change_update_checks_setting,
             shortcut::change_show_whats_new_on_update_setting,
@@ -958,10 +959,11 @@ pub fn run(cli_args: CliArgs) {
             let mut win_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
                     .title("Plot Flow")
-                    .inner_size(680.0, 570.0)
-                    .min_inner_size(680.0, 570.0)
-                    .resizable(true)
-                    .maximizable(true)
+                    .inner_size(1000.0, 680.0)
+                    .min_inner_size(1000.0, 680.0)
+                    .max_inner_size(1000.0, 680.0)
+                    .resizable(false)
+                    .maximizable(false)
                     .visible(false);
 
             if let Some(data_dir) = portable::data_dir() {

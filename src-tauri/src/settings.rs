@@ -489,6 +489,11 @@ pub struct AppSettings {
     pub filler_word_removal_enabled: bool,
     #[serde(default)]
     pub custom_filler_words: Option<Vec<String>>,
+    /// Raise the recording microphone to 100 % for the duration of a
+    /// recording and restore the previous level afterwards (Windows), and
+    /// amplify very quiet recordings in software before recognition.
+    #[serde(default = "default_auto_mic_gain")]
+    pub auto_mic_gain: bool,
     #[serde(default)]
     pub transcribe_accelerator: TranscribeAcceleratorSetting,
     #[serde(default)]
@@ -519,14 +524,17 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 3;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 4;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
 }
 
 fn default_hold_threshold_ms() -> u64 {
-    300
+    // A real tap is 80–200 ms; no speech fits in under half a second, so a
+    // wider margin costs nothing and keeps a slow key edge from reading as a
+    // hold.
+    500
 }
 
 fn default_always_on_microphone() -> bool {
@@ -584,6 +592,10 @@ fn default_filler_word_removal_enabled() -> bool {
     true
 }
 
+fn default_auto_mic_gain() -> bool {
+    true
+}
+
 fn default_debug_mode() -> bool {
     false
 }
@@ -625,7 +637,7 @@ fn default_sound_theme() -> SoundTheme {
 }
 
 fn default_theme() -> Theme {
-    Theme::System
+    Theme::Dark
 }
 
 fn default_post_process_enabled() -> bool {
@@ -962,6 +974,7 @@ pub fn get_default_settings() -> AppSettings {
         external_script_path: None,
         filler_word_removal_enabled: default_filler_word_removal_enabled(),
         custom_filler_words: None,
+        auto_mic_gain: default_auto_mic_gain(),
         transcribe_accelerator: TranscribeAcceleratorSetting::default(),
         ort_accelerator: OrtAcceleratorSetting::default(),
         transcribe_gpu_device: default_transcribe_gpu_device(),
@@ -1216,6 +1229,15 @@ fn apply_settings_migrations(
         if settings.model_unload_timeout == ModelUnloadTimeout::Min5 {
             settings.model_unload_timeout = ModelUnloadTimeout::Never;
         }
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        updated = true;
+    }
+
+    if stored_schema_version < 4 {
+        // Plot Flow 2 ships a dark shell by default. Switch existing installs
+        // over once; the Appearance setting still lets the user pick light or
+        // follow the OS afterwards.
+        settings.theme = Theme::Dark;
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
     }

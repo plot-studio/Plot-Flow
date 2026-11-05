@@ -454,6 +454,10 @@
       "fillerWordRemoval": {
         "title": "Remove Filler Words",
         "description": "Removes common hesitation words from transcriptions. Turn off to keep them."
+      },
+      "autoMicGain": {
+        "title": "Boost Microphone While Recording",
+        "description": "Sets the microphone level to maximum for the duration of a recording and restores it afterwards. Very quiet recordings are also amplified before recognition."
       }
     },
     "postProcessing": {
@@ -769,5 +773,125 @@
     "learnMore": "How to fix",
     "recorderBlocked": "Can't record shortcuts right now — macOS Secure Input is blocking key events. Resolve the Secure Input warning first.",
     "dismiss": "Dismiss"
+  },
+  "meeting": {
+    "title": "Meeting",
+    "subtitle": "Record a call or a conversation and get a transcript with speakers.",
+    "start": "Start recording",
+    "stop": "Stop",
+    "pause": "Pause",
+    "resume": "Resume",
+    "discard": "Discard",
+    "untitled": "Untitled meeting",
+    "loadingStatus": "Checking recorder…",
+    "sources": {
+      "microphone": "Microphone",
+      "system": "Computer audio",
+      "hint": "Computer audio captures the other side of Telegram, Telemost or Zoom calls — no bot in the call.",
+      "none": "Turn on at least one source to start."
+    },
+    "levels": {
+      "me": "Me",
+      "others": "Others"
+    },
+    "state": {
+      "recording": "Recording",
+      "paused": "Paused",
+      "finalizing": "Finishing…"
+    },
+    "finalizing": {
+      "title": "Finishing…",
+      "hint": "Saving the last fragments of the transcript."
+    },
+    "live": {
+      "title": "Live transcript",
+      "empty": "Listening… the transcript will appear here.",
+      "paused": "Recording paused",
+      "toNew": "To new",
+      "segments_one": "{{count}} fragment",
+      "segments_other": "{{count}} fragments"
+    },
+    "list": {
+      "title": "Past meetings",
+      "empty": "No meetings yet. Press the button above to record the first one.",
+      "loading": "Loading meetings…",
+      "retry": "Retry",
+      "segments_one": "{{count}} fragment",
+      "segments_other": "{{count}} fragments",
+      "speakers_one": "{{count}} speaker",
+      "speakers_other": "{{count}} speakers",
+      "status": {
+        "interrupted": "Interrupted",
+        "recording": "Recording"
+      },
+      "actions": "Actions",
+      "open": "Open",
+      "rename": "Rename",
+      "export": "Export",
+      "delete": "Delete"
+    },
+    "date": {
+      "today": "Today",
+      "yesterday": "Yesterday"
+    },
+    "detail": {
+      "back": "Back",
+      "participants": "Participants",
+      "transcript": "Transcript",
+      "empty": "The transcript is empty.",
+      "loading": "Opening meeting…",
+      "titlePlaceholder": "Meeting title",
+      "editTitle": "Click to rename",
+      "speakerPlaceholder": "Name",
+      "renameSpeaker": "Rename speaker",
+      "copyTimestamp": "Copy timestamp",
+      "copied": "Copied",
+      "summarySoon": "Coming soon: meeting summary",
+      "export": "Export",
+      "formats": {
+        "txt": "Text (.txt)",
+        "md": "Markdown (.md)",
+        "json": "JSON (.json)",
+        "srt": "Subtitles (.srt)"
+      },
+      "exported": "Exported",
+      "copyPath": "Copy path",
+      "pathCopied": "Path copied",
+      "delete": "Delete"
+    },
+    "speaker": {
+      "me": "Me",
+      "other": "Speaker {{n}}"
+    },
+    "dialog": {
+      "cancel": "Cancel",
+      "close": "Close",
+      "save": "Save",
+      "discardTitle": "Discard the recording?",
+      "discardBody": "The audio and transcript of this meeting will be deleted. This cannot be undone.",
+      "discardConfirm": "Discard",
+      "deleteTitle": "Delete the meeting?",
+      "deleteBody": "“{{title}}” and its transcript will be deleted permanently.",
+      "deleteConfirm": "Delete",
+      "renameTitle": "Rename meeting"
+    },
+    "toast": {
+      "discarded": "Recording discarded",
+      "deleted": "Meeting deleted",
+      "renamed": "Meeting renamed",
+      "error": "Meeting error"
+    },
+    "errors": {
+      "start": "Could not start the recording",
+      "stop": "Could not stop the recording",
+      "pause": "Could not pause the recording",
+      "resume": "Could not resume the recording",
+      "discard": "Could not discard the recording",
+      "list": "Could not load meetings",
+      "detail": "Could not open the meeting",
+      "rename": "Could not rename",
+      "delete": "Could not delete",
+      "export": "Could not export"
+    }
   }
 }

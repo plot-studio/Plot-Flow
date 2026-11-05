@@ -230,6 +230,104 @@ fn restore_mute(prev_muted: Option<bool>) {
     }
 }
 
+/// Our forced "microphone at 100 %" for the duration of a recording, with the
+/// level the user had before so it can be restored exactly.
+#[derive(Debug, Default, Clone, Copy)]
+struct MicGainState {
+    did_boost: bool,
+    prev_level: Option<f32>,
+}
+
+/// The capture endpoint's master-volume interface: the device whose WASAPI
+/// friendly name equals `device_name` (cpal reports the same name), or the
+/// default microphone when no name is given or it is not found.
+#[cfg(target_os = "windows")]
+fn capture_endpoint_volume(
+    device_name: Option<&str>,
+) -> Option<windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume> {
+    unsafe {
+        use windows::Win32::{
+            Devices::Properties::DEVPKEY_Device_FriendlyName,
+            Media::Audio::{
+                eCapture, eConsole, Endpoints::IAudioEndpointVolume, IMMDevice,
+                IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
+            },
+            System::Com::{
+                CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ,
+            },
+        };
+
+        // No-op if COM is already initialized on this thread (see set_mute).
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+
+        let mut device: Option<IMMDevice> = None;
+        if let Some(wanted) = device_name {
+            if let Ok(collection) = enumerator.EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE) {
+                let count = collection.GetCount().unwrap_or(0);
+                for index in 0..count {
+                    let Ok(candidate) = collection.Item(index) else {
+                        continue;
+                    };
+                    let Ok(store) = candidate.OpenPropertyStore(STGM_READ) else {
+                        continue;
+                    };
+                    // DEVPROPKEY and PROPERTYKEY share one layout; cpal does the same cast.
+                    let Ok(value) =
+                        store.GetValue(&DEVPKEY_Device_FriendlyName as *const _ as *const _)
+                    else {
+                        continue;
+                    };
+                    if value.to_string() == wanted {
+                        device = Some(candidate);
+                        break;
+                    }
+                }
+            }
+        }
+        let device = match device {
+            Some(found) => found,
+            None => enumerator.GetDefaultAudioEndpoint(eCapture, eConsole).ok()?,
+        };
+        device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok()
+    }
+}
+
+/// Current master level of the recording microphone, 0.0–1.0.
+#[cfg(target_os = "windows")]
+fn get_mic_level(device_name: Option<&str>) -> Option<f32> {
+    unsafe {
+        capture_endpoint_volume(device_name)?
+            .GetMasterVolumeLevelScalar()
+            .ok()
+    }
+}
+
+/// Set the recording microphone's master level (0.0–1.0). Returns success.
+#[cfg(target_os = "windows")]
+fn set_mic_level(device_name: Option<&str>, level: f32) -> bool {
+    unsafe {
+        capture_endpoint_volume(device_name)
+            .and_then(|volume| {
+                volume
+                    .SetMasterVolumeLevelScalar(level.clamp(0.0, 1.0), std::ptr::null())
+                    .ok()
+            })
+            .is_some()
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_mic_level(_device_name: Option<&str>) -> Option<f32> {
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_mic_level(_device_name: Option<&str>, _level: f32) -> bool {
+    false
+}
+
 /* ──────────────────────────────────────────────────────────────── */
 
 #[derive(Clone, Debug)]
@@ -380,6 +478,7 @@ pub struct AudioRecordingManager {
     is_open: Arc<Mutex<bool>>,
     is_recording: Arc<Mutex<bool>>,
     mute_state: Arc<Mutex<MuteState>>,
+    mic_gain_state: Arc<Mutex<MicGainState>>,
     close_generation: Arc<AtomicU64>,
     cancel_generation: Arc<AtomicU64>,
     stream_router: Arc<StreamRouter>,
@@ -425,6 +524,7 @@ impl AudioRecordingManager {
             is_open: Arc::new(Mutex::new(false)),
             is_recording: Arc::new(Mutex::new(false)),
             mute_state: Arc::new(Mutex::new(MuteState::default())),
+            mic_gain_state: Arc::new(Mutex::new(MicGainState::default())),
             close_generation: Arc::new(AtomicU64::new(0)),
             cancel_generation: Arc::new(AtomicU64::new(0)),
             stream_router,
@@ -615,6 +715,66 @@ impl AudioRecordingManager {
                 "Mute removed (restored prev_muted={:?})",
                 mute_guard.prev_muted
             );
+        }
+    }
+
+    /// Name of the microphone the next recording will use, if a specific one
+    /// is configured (`None` = system default).
+    fn active_microphone_name(&self, settings: &AppSettings) -> Option<String> {
+        match self.desired_microphone(settings) {
+            DesiredMicrophone::Default => None,
+            DesiredMicrophone::Selected(name) | DesiredMicrophone::Clamshell(name) => Some(name),
+        }
+    }
+
+    /// Raise the recording microphone to 100 % when `auto_mic_gain` is on,
+    /// remembering the user's level so `restore_mic_gain` can put it back.
+    /// Best effort: a failure just records at the current level.
+    pub fn apply_mic_gain(&self) {
+        let settings = get_settings(&self.app_handle);
+        if !settings.auto_mic_gain {
+            return;
+        }
+        let mut guard = self.mic_gain_state.lock().unwrap();
+        if guard.did_boost {
+            return;
+        }
+        let device_name = self.active_microphone_name(&settings);
+        let previous = get_mic_level(device_name.as_deref());
+        if previous.is_some_and(|level| level >= 0.999) {
+            return;
+        }
+        if set_mic_level(device_name.as_deref(), 1.0) {
+            guard.prev_level = previous;
+            guard.did_boost = true;
+            debug!(
+                "Microphone level raised to 100% for recording (was {:?})",
+                previous.map(|l| (l * 100.0).round())
+            );
+        } else {
+            debug!("Microphone level could not be changed; recording at the current level");
+        }
+    }
+
+    /// Put the microphone level back after a boosted recording.
+    pub fn restore_mic_gain(&self) {
+        let mut guard = self.mic_gain_state.lock().unwrap();
+        if !guard.did_boost {
+            return;
+        }
+        guard.did_boost = false;
+        let Some(previous) = guard.prev_level else {
+            return;
+        };
+        let settings = get_settings(&self.app_handle);
+        let device_name = self.active_microphone_name(&settings);
+        if set_mic_level(device_name.as_deref(), previous) {
+            debug!(
+                "Microphone level restored to {:.0}%",
+                previous * 100.0
+            );
+        } else {
+            error!("Failed to restore the microphone level; it stays at 100%");
         }
     }
 
@@ -833,6 +993,9 @@ impl AudioRecordingManager {
                 return Err(msg);
             }
 
+            // Full sensitivity for the whole recording; restored on stop/cancel.
+            self.apply_mic_gain();
+
             if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                 match rec.start(vad_policy) {
                     Ok(receiver) => {
@@ -1031,6 +1194,7 @@ impl AudioRecordingManager {
 
                 *self.is_recording.lock().unwrap() = false;
                 self.set_state(&mut self.state.lock().unwrap(), RecordingState::Idle);
+                self.restore_mic_gain();
 
                 // In on-demand mode, close the mic (lazily if the setting is enabled)
                 if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
@@ -1077,6 +1241,7 @@ impl AudioRecordingManager {
                 if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                     let _ = rec.stop(); // Discard the result
                 }
+                self.restore_mic_gain();
 
                 *self.is_recording.lock().unwrap() = false;
 

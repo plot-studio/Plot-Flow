@@ -316,14 +316,23 @@ fn gated_filler_words_for_language(lang: &str) -> &'static [&'static str] {
         "en" => &["um", "ah", "eh", "ha"],
         "de" => &["äh", "ähm"],
         "fr" => &["euh"],
+        // Russian hesitation sounds as GigaAM spells them. A lone "а" is a
+        // real conjunction and "ну" a real particle, so only the drawn-out
+        // and hyphenated forms are listed.
+        "ru" => &[
+            "э", "э-э", "э-э-э", "ээ", "эээ", "эм", "эмм", "э-м", "а-а", "а-а-а", "а-аа", "ааа",
+            "м-м", "мм", "ну-у",
+        ],
         _ => &[],
     }
 }
 
 static MULTI_SPACE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s{2,}").unwrap());
 
-/// Collapses repeated words (3+ repetitions) to a single instance.
-/// E.g., "wh wh wh wh" -> "wh", "I I I I" -> "I"
+/// Collapses repeated words to a single instance: 3+ repetitions for normal
+/// words ("wh wh wh wh" -> "wh", "I I I I" -> "I"), and already 2 repetitions
+/// for one- and two-letter words, which are the classic dictation stutter
+/// ("и и мы", "а а потом") and almost never a deliberate doubling.
 fn collapse_stutters(text: &str) -> String {
     let words: Vec<&str> = text.split_whitespace().collect();
     if words.is_empty() {
@@ -344,8 +353,9 @@ fn collapse_stutters(text: &str) -> String {
                 count += 1;
             }
 
-            // If 3+ repetitions, collapse to single instance
-            if count >= 3 {
+            // Collapse 3+ repetitions, or 2+ for very short words.
+            let min_repeats = if word_lower.chars().count() <= 2 { 2 } else { 3 };
+            if count >= min_repeats {
                 result.push(word);
                 i += count;
             } else {
@@ -500,6 +510,36 @@ mod tests {
         let text = "So uhm I was thinking uh about this";
         let result = filter_transcription_output(text, "en", &None);
         assert_eq!(result, "So I was thinking about this");
+    }
+
+    #[test]
+    fn test_filter_russian_filler_words() {
+        let text = "Ну э-э я думаю, что э это ээ правильно, эм, да";
+        let result = filter_transcription_output(text, "ru", &None);
+        assert_eq!(result, "Ну я думаю, что это правильно, да");
+    }
+
+    #[test]
+    fn test_russian_single_letter_conjunction_is_kept() {
+        // "а" alone is a conjunction; only drawn-out forms are fillers.
+        let text = "Я пошёл, а он остался, а-а, дома";
+        let result = filter_transcription_output(text, "ru", &None);
+        assert_eq!(result, "Я пошёл, а он остался, дома");
+    }
+
+    #[test]
+    fn test_russian_fillers_need_language_evidence() {
+        // Unknown output language: Russian gated list must not apply.
+        let text = "э-э привет";
+        let result = remove_filler_words(text, &OutputLanguageEvidence::Unknown, &None, true);
+        assert_eq!(result, "э-э привет");
+    }
+
+    #[test]
+    fn test_collapse_short_word_double_repeats() {
+        let text = "и и мы пошли, а а потом вернулись, что что это";
+        let result = normalize_transcription_output(text);
+        assert_eq!(result, "и мы пошли, а потом вернулись, что что это");
     }
 
     #[test]

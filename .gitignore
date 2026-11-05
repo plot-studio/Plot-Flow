@@ -45,6 +45,9 @@ result
 
 # Personal data, private credentials, and release payloads
 Data/
+backup/
+# Machine-specific cargo config (target dir on D:, jobs=1)
+.cargo/
 .env
 .env.*
 *.key

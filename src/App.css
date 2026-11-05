@@ -1,11 +1,27 @@
 @import "tailwindcss";
 @import "./styles/theme.css";
 
+/* One font stack for the whole shell. Segoe UI (Windows) and the system UI
+   font elsewhere both carry full Cyrillic. */
+@theme {
+  --font-sans:
+    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo,
+    monospace;
+}
+
 /* Register the shared color tokens (src/styles/theme.css) as Tailwind
    utilities */
 @theme inline {
   --color-text: var(--color-text);
+  --color-text-muted: var(--color-text-muted);
   --color-background: var(--color-background);
+  --color-surface: var(--color-surface);
+  --color-surface-2: var(--color-surface-2);
+  --color-line: var(--color-line);
+  --color-on-accent: var(--color-on-accent);
   --color-background-ui: var(--color-background-ui);
   --color-logo-primary: var(--color-logo-primary);
   --color-logo-stroke: var(--color-logo-stroke);
@@ -16,9 +32,10 @@
 }
 
 :root {
-  /* Typography */
-  font-size: 15px;
-  line-height: 24px;
+  /* 16px root keeps Tailwind's rem scale on whole pixels: p-2 = 8px,
+     p-4 = 16px, rounded-xl = 12px, text-sm = 14px. */
+  font-size: 16px;
+  line-height: 1.5;
   font-weight: 400;
 
   /* Typography settings */
@@ -36,13 +53,21 @@
   );
 
   /* Log console surface — a subtle shade off the app background so the live log
-     viewer reads as a distinct console. In light mode this is a faint gray code
-     block (matching other surfaces); the dark theme overrides it below. */
+     viewer reads as a distinct console. */
   --color-log-surface: color-mix(in srgb, var(--color-background), black 6%);
 
   /* Apply colors */
   color: var(--color-text);
   background-color: var(--color-background);
+
+  /* Native controls (select, input[type=month], scrollbars) follow the palette */
+  color-scheme: light;
+}
+
+body {
+  /* Body copy sits at 15px; components pick text-sm/text-xs explicitly. */
+  font-size: 0.9375rem;
+  margin: 0;
 }
 
 .container {
@@ -56,9 +81,20 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* Just a bit darker than the (already dark) background, keeping its warm tint */
-    --color-log-surface: color-mix(in srgb, var(--color-background), black 15%);
+    color-scheme: dark;
+    /* Slightly deeper than the (already dark) background */
+    --color-log-surface: color-mix(in srgb, var(--color-background), black 25%);
   }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-log-surface: color-mix(in srgb, var(--color-background), black 6%);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-log-surface: color-mix(in srgb, var(--color-background), black 25%);
 }
 
 /* Keep onboarding centered when classic scrollbars consume layout space.
@@ -72,10 +108,10 @@
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
-/* Custom Scrollbar */
+/* Custom Scrollbar — slim, track-less, so it reads as part of the surface */
 ::-webkit-scrollbar {
-  width: 14px;
-  height: 14px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -84,13 +120,34 @@
   background-color: var(--scrollbar-thumb);
   border-radius: 20px;
   border: 3px solid transparent;
-  border-right-width: 4px;
-  border-left-width: 3px;
   background-clip: content-box;
   min-height: 32px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background-color: var(--scrollbar-thumb-hover);
+}
+
+/* Keyboard focus: one calm ring everywhere, only for keyboard users */
+:focus-visible {
+  outline: 2px solid
+    color-mix(in srgb, var(--color-logo-primary) 70%, transparent);
+  outline-offset: 2px;
+}
+
+/* Range inputs (volume, audio player) — accent thumb on a quiet track */
+input[type="range"] {
+  accent-color: var(--color-logo-primary);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--color-surface);
+  border: 2px solid var(--color-logo-primary);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  cursor: pointer;
 }
 
 @layer utilities {

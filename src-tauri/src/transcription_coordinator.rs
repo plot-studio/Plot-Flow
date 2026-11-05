@@ -169,7 +169,12 @@ enum Effect {
 
 /// Commands processed sequentially by the coordinator thread.
 enum Command {
-    Input(InputEvent),
+    /// The key event and the instant it was *sent* (the real key edge). The
+    /// coordinator thread blocks for the whole Start effect (opening the
+    /// microphone takes 25–350 ms on WASAPI), so a release queued behind it
+    /// must never be timed at dequeue — that turned a 120 ms tap into a
+    /// "hold" and the release stopped the recording it had just started.
+    Input(InputEvent, Instant),
     Cancel { recording_was_active: bool },
     ProcessingFinished,
 }
@@ -566,8 +571,8 @@ impl TranscriptionCoordinator {
                     };
 
                     match cmd {
-                        Command::Input(input) => {
-                            if let Some(effect) = state.on_input(input, Instant::now()) {
+                        Command::Input(input, at) => {
+                            if let Some(effect) = state.on_input(input, at) {
                                 run_effect(&app, &mut state, effect);
                             }
                         }
@@ -635,14 +640,17 @@ impl TranscriptionCoordinator {
     ) {
         if self
             .tx
-            .send(Command::Input(InputEvent {
-                binding_id: binding_id.to_string(),
-                hotkey_string: hotkey_string.to_string(),
-                is_pressed,
-                mode,
-                hold_threshold,
-                external,
-            }))
+            .send(Command::Input(
+                InputEvent {
+                    binding_id: binding_id.to_string(),
+                    hotkey_string: hotkey_string.to_string(),
+                    is_pressed,
+                    mode,
+                    hold_threshold,
+                    external,
+                },
+                Instant::now(),
+            ))
             .is_err()
         {
             warn!("Transcription coordinator channel closed");

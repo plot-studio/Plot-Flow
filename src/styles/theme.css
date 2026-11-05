@@ -3,16 +3,36 @@
 :root {
   /* Palette source of truth. Each themed color is defined once as a
      light/dark pair; the active tokens below and the `data-theme` overrides
-     in App.css reference these, so a hex value lives in exactly one place. */
-  --light-color-text: #0f0f0f;
-  --light-color-background: #fbfbfb;
+     reference these, so a hex value lives in exactly one place.
+
+     Layering (both themes): background (window) → surface (cards, sidebar)
+     → surface-2 (inputs, hover fills). `line` is the hairline border used
+     between and around surfaces. `on-accent` is the text/icon color placed on
+     a solid accent fill (buttons, the active sidebar item). */
+
+  /* Light: soft warm off-white shell with white cards */
+  --light-color-text: #1a1c1e;
+  --light-color-text-muted: #5f646b;
+  --light-color-background: #f4f4f2;
+  --light-color-surface: #ffffff;
+  --light-color-surface-2: #ececea;
+  --light-color-line: #e1e2df;
+  --light-color-mid-gray: #6f747c;
   --light-color-logo-primary: #96a36c;
   --light-color-logo-stroke: #4f5737;
+  --light-color-on-accent: #ffffff;
 
-  --dark-color-text: #fbfbfb;
-  --dark-color-background: #2c2b29;
+  /* Dark: near-black shell, graphite surfaces, the same olive accent */
+  --dark-color-text: #e6e8ea;
+  --dark-color-text-muted: #9ba1a8;
+  --dark-color-background: #0f1113;
+  --dark-color-surface: #161a1d;
+  --dark-color-surface-2: #1e2327;
+  --dark-color-line: #272c31;
+  --dark-color-mid-gray: #8d939b;
   --dark-color-logo-primary: #96a36c;
   --dark-color-logo-stroke: #dce5b7;
+  --dark-color-on-accent: #0f1113;
 
   /* Semantic status colors. First used by SecureInputWarning; intended to
      replace the ad-hoc yellow-500/red-500 usages (e.g. ui/Alert.tsx) over
@@ -25,14 +45,19 @@
   /* Tokens that do not change between light and dark */
   --color-background-ui: #96a36c;
   --color-text-stroke: #f6f6f6;
-  --color-mid-gray: #808080;
 
   /* Active palette — defaults to light, follows the OS via the media query
      below, or is forced by `data-theme` (see the overrides below). */
   --color-text: var(--light-color-text);
+  --color-text-muted: var(--light-color-text-muted);
   --color-background: var(--light-color-background);
+  --color-surface: var(--light-color-surface);
+  --color-surface-2: var(--light-color-surface-2);
+  --color-line: var(--light-color-line);
+  --color-mid-gray: var(--light-color-mid-gray);
   --color-logo-primary: var(--light-color-logo-primary);
   --color-logo-stroke: var(--light-color-logo-stroke);
+  --color-on-accent: var(--light-color-on-accent);
   --color-warning: var(--light-color-warning);
   --color-error: var(--light-color-error);
 }
@@ -40,9 +65,15 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --color-text: var(--dark-color-text);
+    --color-text-muted: var(--dark-color-text-muted);
     --color-background: var(--dark-color-background);
+    --color-surface: var(--dark-color-surface);
+    --color-surface-2: var(--dark-color-surface-2);
+    --color-line: var(--dark-color-line);
+    --color-mid-gray: var(--dark-color-mid-gray);
     --color-logo-primary: var(--dark-color-logo-primary);
     --color-logo-stroke: var(--dark-color-logo-stroke);
+    --color-on-accent: var(--dark-color-on-accent);
     --color-warning: var(--dark-color-warning);
     --color-error: var(--dark-color-error);
   }
@@ -52,7 +83,7 @@
  * Explicit theme override, driven by the `theme` setting via
  * `document.documentElement.dataset.theme`. When set, the higher-specificity
  * attribute selectors win over the `prefers-color-scheme` media query above,
- * so a user can keep Handy light or dark regardless of the OS setting.
+ * so a user can keep Plot Flow light or dark regardless of the OS setting.
  * `system` (or no attribute) leaves the OS in charge.
  *
  * Lives here (not in App.css) so every window that imports the shared palette —
@@ -60,18 +91,30 @@
  */
 :root[data-theme="light"] {
   --color-text: var(--light-color-text);
+  --color-text-muted: var(--light-color-text-muted);
   --color-background: var(--light-color-background);
+  --color-surface: var(--light-color-surface);
+  --color-surface-2: var(--light-color-surface-2);
+  --color-line: var(--light-color-line);
+  --color-mid-gray: var(--light-color-mid-gray);
   --color-logo-primary: var(--light-color-logo-primary);
   --color-logo-stroke: var(--light-color-logo-stroke);
+  --color-on-accent: var(--light-color-on-accent);
   --color-warning: var(--light-color-warning);
   --color-error: var(--light-color-error);
 }
 
 :root[data-theme="dark"] {
   --color-text: var(--dark-color-text);
+  --color-text-muted: var(--dark-color-text-muted);
   --color-background: var(--dark-color-background);
+  --color-surface: var(--dark-color-surface);
+  --color-surface-2: var(--dark-color-surface-2);
+  --color-line: var(--dark-color-line);
+  --color-mid-gray: var(--dark-color-mid-gray);
   --color-logo-primary: var(--dark-color-logo-primary);
   --color-logo-stroke: var(--dark-color-logo-stroke);
+  --color-on-accent: var(--dark-color-on-accent);
   --color-warning: var(--dark-color-warning);
   --color-error: var(--dark-color-error);
 }
