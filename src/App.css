@@ -32,10 +32,10 @@
 }
 
 :root {
-  /* 16px root keeps Tailwind's rem scale on whole pixels: p-2 = 8px,
-     p-4 = 16px, rounded-xl = 12px, text-sm = 14px. */
-  font-size: 16px;
-  line-height: 1.5;
+  /* Typography — kept at the approved 15px so the statistics cards keep
+     their verified geometry. */
+  font-size: 15px;
+  line-height: 24px;
   font-weight: 400;
 
   /* Typography settings */
@@ -65,8 +65,6 @@
 }
 
 body {
-  /* Body copy sits at 15px; components pick text-sm/text-xs explicitly. */
-  font-size: 0.9375rem;
   margin: 0;
 }
 

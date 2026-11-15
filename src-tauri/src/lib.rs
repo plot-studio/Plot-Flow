@@ -959,9 +959,12 @@ pub fn run(cli_args: CliArgs) {
             let mut win_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
                     .title("Plot Flow")
-                    .inner_size(1000.0, 680.0)
-                    .min_inner_size(1000.0, 680.0)
-                    .max_inner_size(1000.0, 680.0)
+                    // Fixed size: every page is laid out for exactly this
+                    // window (statistics cards were verified at ~500px of
+                    // content next to the 160px sidebar).
+                    .inner_size(760.0, 640.0)
+                    .min_inner_size(760.0, 640.0)
+                    .max_inner_size(760.0, 640.0)
                     .resizable(false)
                     .maximizable(false)
                     .visible(false);

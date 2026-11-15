@@ -58,6 +58,7 @@ backup/
 *.dll
 *.pdb
 src-tauri/resources/models/*.gguf
+src-tauri/resources/models/*.download
 release/
 
 # Upstream automation and marketing material are not Plot Flow release inputs.

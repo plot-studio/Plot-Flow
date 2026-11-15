@@ -316,22 +316,89 @@ fn gated_filler_words_for_language(lang: &str) -> &'static [&'static str] {
         "en" => &["um", "ah", "eh", "ha"],
         "de" => &["äh", "ähm"],
         "fr" => &["euh"],
-        // Russian hesitation sounds as GigaAM spells them. A lone "а" is a
-        // real conjunction and "ну" a real particle, so only the drawn-out
-        // and hyphenated forms are listed.
-        "ru" => &[
-            "э", "э-э", "э-э-э", "ээ", "эээ", "эм", "эмм", "э-м", "а-а", "а-а-а", "а-аа", "ааа",
-            "м-м", "мм", "ну-у",
-        ],
+        // Russian is handled by `remove_russian_hesitations`: GigaAM spells a
+        // drawn-out "а"/"э" in endless variants ("э-а-а", "аэ-э-а", "а-а-а").
         _ => &[],
     }
+}
+
+/// Whether a bare token (punctuation already stripped) is a Russian
+/// hesitation sound: "э", "ээ", "эм", "а-а", "э-а-а", "аэ-э-а", "м-м", "ммм"…
+/// A lone "а" is a real conjunction ("а потом") and is never removed.
+fn is_russian_hesitation(core: &str) -> bool {
+    let lower = core.to_lowercase();
+    let lower = lower.trim_matches('-');
+    if lower.is_empty() || lower == "а" {
+        return false;
+    }
+    let parts: Vec<&str> = lower.split('-').collect();
+    let only_sounds = parts
+        .iter()
+        .all(|p| !p.is_empty() && p.chars().all(|c| matches!(c, 'а' | 'э' | 'м')));
+    if !only_sounds {
+        return false;
+    }
+    if parts.len() > 1 {
+        // Hyphenated chain of а/э/м: always a drawn-out sound.
+        return true;
+    }
+    let p = parts[0];
+    let n = p.chars().count();
+    // "э", "ээ", "эм", "эмм", "аа", "ааа", "мм" — but not "ам"/"ма" etc.
+    p.chars().all(|c| c == 'э')
+        || (p.starts_with('э') && p.chars().skip(1).all(|c| c == 'м'))
+        || (n >= 2 && p.chars().all(|c| c == 'а'))
+        || (n >= 2 && p.chars().all(|c| c == 'м'))
+}
+
+/// Remove Russian hesitation sounds, keeping the sentence intact: a sentence
+/// mark the filler carried ("Но э-э-э. Дальше") moves to the previous word,
+/// and a sentence that started with the filler gets its capital back
+/// ("Э-а-а, интерфейс" → "Интерфейс").
+fn remove_russian_hesitations(text: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut capitalize_next = false;
+    for token in text.split_whitespace() {
+        let core = token.trim_matches(|c: char| !c.is_alphabetic() && c != '-');
+        if is_russian_hesitation(core) {
+            let trailing: String = token
+                .chars()
+                .rev()
+                .take_while(|c| matches!(c, '.' | '!' | '?' | '…'))
+                .collect();
+            let at_sentence_start = out
+                .last()
+                .map_or(true, |w| w.ends_with(['.', '!', '?', '…']));
+            if !trailing.is_empty() {
+                if let Some(prev) = out.last_mut() {
+                    if !prev.ends_with(['.', '!', '?', '…', ',']) {
+                        prev.extend(trailing.chars().rev());
+                    }
+                }
+            }
+            if at_sentence_start && core.chars().next().is_some_and(char::is_uppercase) {
+                capitalize_next = true;
+            }
+            continue;
+        }
+        if capitalize_next {
+            capitalize_next = false;
+            let mut chars = token.chars();
+            if let Some(first) = chars.next() {
+                out.push(first.to_uppercase().chain(chars).collect());
+                continue;
+            }
+        }
+        out.push(token.to_string());
+    }
+    out.join(" ")
 }
 
 static MULTI_SPACE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s{2,}").unwrap());
 
 /// Collapses repeated words to a single instance: 3+ repetitions for normal
 /// words ("wh wh wh wh" -> "wh", "I I I I" -> "I"), and already 2 repetitions
-/// for one- and two-letter words, which are the classic dictation stutter
+/// for one-letter words, which are the classic dictation stutter
 /// ("и и мы", "а а потом") and almost never a deliberate doubling.
 fn collapse_stutters(text: &str) -> String {
     let words: Vec<&str> = text.split_whitespace().collect();
@@ -354,7 +421,8 @@ fn collapse_stutters(text: &str) -> String {
             }
 
             // Collapse 3+ repetitions, or 2+ for very short words.
-            let min_repeats = if word_lower.chars().count() <= 2 { 2 } else { 3 };
+            // ("no no", "да да", "не не" are deliberate; "и и", "а а" are not.)
+            let min_repeats = if word_lower.chars().count() == 1 { 2 } else { 3 };
             if count >= min_repeats {
                 result.push(word);
                 i += count;
@@ -424,7 +492,26 @@ pub fn remove_filler_words(
         filtered = pattern.replace_all(&filtered, "").to_string();
     }
 
+    let is_russian = language
+        .language()
+        .is_some_and(|l| l.split(['-', '_']).next() == Some("ru"));
+    if custom_filler_words.is_none() && is_russian {
+        filtered = remove_russian_hesitations(&filtered);
+    }
+
     filtered
+}
+
+/// Drop the single full stop the model puts after the last word: the text is
+/// pasted into chats and fields where a trailing "." is unwanted. "?", "!",
+/// "…" and "..." are deliberate and stay.
+pub fn strip_trailing_period(text: &str) -> String {
+    let trimmed = text.trim_end();
+    if trimmed.ends_with('.') && !trimmed.ends_with("..") {
+        trimmed[..trimmed.len() - 1].to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Applies non-filler transcription cleanup.
@@ -525,6 +612,33 @@ mod tests {
         let text = "Я пошёл, а он остался, а-а, дома";
         let result = filter_transcription_output(text, "ru", &None);
         assert_eq!(result, "Я пошёл, а он остался, дома");
+    }
+
+    #[test]
+    fn test_russian_hesitations_from_real_dictation() {
+        // Literal GigaAM output from the owner's history.
+        let cases = [
+            ("Отлично, получается. А-а-а. Давай начнём", "Отлично, получается. Давай начнём"),
+            ("пока не нужен. АЭ-э-а. И режим робот", "пока не нужен. И режим робот"),
+            ("оставим. Э-а-а, интерфейс можно", "оставим. Интерфейс можно"),
+            ("не нужно. Э-аэ, расширить статистику", "не нужно. Расширить статистику"),
+            ("ничего не делал, Но э-э-э. То есть непонятно", "ничего не делал, Но. То есть непонятно"),
+            ("давай -э э-э девяностое имя", "давай девяностое имя"),
+            ("мама мыла раму, ам, мам", "мама мыла раму, ам, мам"),
+        ];
+        for (input, expected) in cases {
+            let result = filter_transcription_output(input, "ru", &None);
+            assert_eq!(result, expected, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn test_strip_trailing_period() {
+        assert_eq!(strip_trailing_period("Привет, как дела."), "Привет, как дела");
+        assert_eq!(strip_trailing_period("Как дела?"), "Как дела?");
+        assert_eq!(strip_trailing_period("Ну и вот..."), "Ну и вот...");
+        assert_eq!(strip_trailing_period("Первое. Второе. "), "Первое. Второе");
+        assert_eq!(strip_trailing_period(""), "");
     }
 
     #[test]

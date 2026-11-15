@@ -13,7 +13,8 @@ pub use audio::{
 pub use chunking::{boost_quiet_audio, plan_chunks};
 pub use lang_id::detect_output_language;
 pub use text::{
-    apply_custom_words, normalize_transcription_output, remove_filler_words, OutputLanguageEvidence,
+    apply_custom_words, normalize_transcription_output, remove_filler_words, strip_trailing_period,
+    OutputLanguageEvidence,
 };
 pub use utils::get_cpal_host;
 pub use vad::{EarshotVad, SileroVad, VoiceActivityDetector};

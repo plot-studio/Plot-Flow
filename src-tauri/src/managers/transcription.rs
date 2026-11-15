@@ -1,6 +1,7 @@
 use crate::audio_toolkit::{
     apply_custom_words, boost_quiet_audio, detect_output_language,
-    normalize_transcription_output, plan_chunks, remove_filler_words, OutputLanguageEvidence,
+    normalize_transcription_output, plan_chunks, remove_filler_words, strip_trailing_period,
+    OutputLanguageEvidence,
 };
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
@@ -1359,6 +1360,7 @@ impl TranscriptionManager {
                             session,
                             &audio,
                             &run_options,
+                            settings.auto_mic_gain,
                             model_max_audio_ms,
                         )
                         .map(|(text, language)| {
@@ -1558,11 +1560,14 @@ impl TranscriptionManager {
 /// GigaAM is trained on ≤25 s utterances; fed a 90 s dictation in one go it
 /// returns garbled text (the library logs a warning and carries on). Each
 /// chunk is transcribed separately and the texts are joined with a space.
-/// The language comes from the first chunk that reports one.
+/// The language comes from the first chunk that reports one. With
+/// `normalize_chunks`, every chunk is lifted to full level on its own, so a
+/// stretch spoken far from the microphone is as loud as one spoken close.
 fn run_transcribe_cpp_windowed(
     session: &mut Session,
     audio: &[f32],
     options: &RunOptions,
+    normalize_chunks: bool,
     max_audio_ms: i64,
 ) -> std::result::Result<(String, Option<String>), transcribe_cpp::Error> {
     const SAMPLE_RATE: usize = 16_000;
@@ -1584,7 +1589,11 @@ fn run_transcribe_cpp_windowed(
     let mut language: Option<String> = None;
     for (index, range) in ranges.iter().enumerate() {
         let started = Instant::now();
-        let t = session.run(&audio[range.clone()], options)?;
+        let mut chunk = audio[range.clone()].to_vec();
+        if normalize_chunks {
+            boost_quiet_audio(&mut chunk);
+        }
+        let t = session.run(&chunk, options)?;
         debug!(
             "chunk {}/{}: {:.1}s of audio -> {} chars in {:?}",
             index + 1,
@@ -1879,7 +1888,7 @@ fn post_process_transcription_text(
             settings.filler_word_removal_enabled,
         );
 
-        normalize_transcription_output(&without_fillers)
+        strip_trailing_period(&normalize_transcription_output(&without_fillers))
     })
 }
 

@@ -30,12 +30,15 @@ const MIN_PAUSE_FRAMES: usize = 2;
 /// of a few hundred milliseconds is not worth a model call.
 const MIN_TAIL_MS: usize = 500;
 
-/// Peak below which a recording counts as "very quiet" and gets boosted.
-const QUIET_PEAK: f32 = 0.2;
-/// Peak the boost aims for.
-const TARGET_PEAK: f32 = 0.6;
-/// Maximum software gain (≈ +18 dB) so pure noise is not blown up.
-const MAX_GAIN: f32 = 8.0;
+/// The recording is only ever read by the model, never listened to, so it is
+/// normalized as loud as possible: any audio whose peak is below this gets
+/// lifted.
+const QUIET_PEAK: f32 = 0.9;
+/// Peak the boost aims for (just under clipping).
+const TARGET_PEAK: f32 = 0.95;
+/// Maximum software gain (≈ +24 dB): enough for a voice from the next room,
+/// while a near-silent chunk of pure hiss is not blown up into fake words.
+const MAX_GAIN: f32 = 16.0;
 
 /// Split `audio` (mono, `sample_rate` Hz) into contiguous ranges no longer
 /// than `max_chunk_ms`, cutting at the quietest stretch available in each
@@ -249,18 +252,19 @@ mod tests {
 
     #[test]
     fn quiet_audio_is_boosted_and_capped() {
-        let mut quiet = vec![0.0, 0.05, -0.05, 0.02];
-        let gain = boost_quiet_audio(&mut quiet).expect("quiet audio gets gain");
-        assert!((gain - 8.0).abs() < 1e-6, "gain is capped at 8x, got {gain}");
-        assert!((quiet[1] - 0.4).abs() < 1e-6);
+        let mut faint = vec![0.0, 0.02, -0.02, 0.01];
+        let gain = boost_quiet_audio(&mut faint).expect("faint audio gets gain");
+        assert!((gain - 16.0).abs() < 1e-6, "gain is capped at 16x, got {gain}");
+        assert!((faint[1] - 0.32).abs() < 1e-6);
 
-        let mut moderate = vec![0.0, 0.15, -0.1];
-        let gain = boost_quiet_audio(&mut moderate).expect("0.15 peak is quiet");
-        assert!((gain - 4.0).abs() < 1e-5);
+        let mut moderate = vec![0.0, 0.19, -0.1];
+        let gain = boost_quiet_audio(&mut moderate).expect("0.19 peak is lifted");
+        assert!((gain - 5.0).abs() < 1e-5);
+        assert!((moderate[1] - 0.95).abs() < 1e-5);
 
-        let mut loud = vec![0.0, 0.5, -0.9];
+        let mut loud = vec![0.0, 0.5, -0.92];
         assert!(boost_quiet_audio(&mut loud).is_none());
-        assert_eq!(loud, vec![0.0, 0.5, -0.9]);
+        assert_eq!(loud, vec![0.0, 0.5, -0.92]);
 
         let mut digital_silence = vec![0.0; 10];
         assert!(boost_quiet_audio(&mut digital_silence).is_none());
