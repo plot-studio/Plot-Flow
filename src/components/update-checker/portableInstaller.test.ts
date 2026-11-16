@@ -6,22 +6,21 @@ import {
   PORTABLE_RELEASES_URL,
 } from "./portableInstaller";
 
-const X64_SETUP =
-  "https://github.com/cjpais/Handy/releases/download/v0.9.5/Handy_0.9.5_x64-setup.exe";
-const ARM64_SETUP =
-  "https://github.com/cjpais/Handy/releases/download/v0.9.5/Handy_0.9.5_arm64-setup.exe";
+const RELEASES = "https://github.com/plot-studio/Plot-Flow/releases/download";
+const X64_SETUP = `${RELEASES}/v1.6.0/Plot.Flow_1.6.0_x64-setup.exe`;
+const ARM64_SETUP = `${RELEASES}/v1.6.0/Plot.Flow_1.6.0_arm64-setup.exe`;
 
-// Trimmed copy of the real latest.json served from the updater endpoint.
+// Trimmed copy of a latest.json updater manifest.
 const manifest = {
-  version: "0.9.5",
+  version: "1.6.0",
   platforms: {
     "windows-x86_64-nsis": { url: X64_SETUP, signature: "…" },
     "windows-x86_64-msi": {
-      url: "https://github.com/cjpais/Handy/releases/download/v0.9.5/Handy_0.9.5_x64_en-US.msi",
+      url: `${RELEASES}/v1.6.0/Plot.Flow_1.6.0_x64_en-US.msi`,
     },
     "windows-aarch64-nsis": { url: ARM64_SETUP, signature: "…" },
     "darwin-aarch64": {
-      url: "https://github.com/cjpais/Handy/releases/download/v0.9.5/Handy_aarch64.app.tar.gz",
+      url: `${RELEASES}/v1.6.0/Plot.Flow_aarch64.app.tar.gz`,
     },
   },
 };

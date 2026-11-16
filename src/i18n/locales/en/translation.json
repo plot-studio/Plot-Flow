@@ -422,7 +422,7 @@
       },
       "autoSubmit": {
         "title": "Press Enter after pasting",
-        "description": "Handy in chats: the message is sent on its own.",
+        "description": "Useful in chats: the message is sent on its own.",
         "options": {
           "off": "Don't press",
           "enter": "Enter",
@@ -571,7 +571,7 @@
       "updateChecks": {
         "label": "Check for Updates",
         "description": "Automatically check for new versions of Plot Flow",
-        "lockedDescription": "Disabled by system configuration (HANDY_DISABLE_UPDATER)"
+        "lockedDescription": "Disabled by system configuration (PLOT_FLOW_DISABLE_UPDATER)"
       },
       "whatsNewPreview": {
         "title": "Preview What's New",
@@ -710,7 +710,7 @@
         "ggml": {
           "title": "ggml",
           "description": "High-performance tensor library for on-device machine learning inference",
-          "details": "Handy's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
+          "details": "Plot Flow's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
       }
     },

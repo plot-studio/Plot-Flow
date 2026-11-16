@@ -8,7 +8,7 @@ $visualStudio = & $vswhere -latest -products '*' -requires Microsoft.VisualStudi
 $redist = Get-ChildItem (Join-Path $visualStudio 'VC/Redist/MSVC') -Directory | Sort-Object Name -Descending | ForEach-Object { Join-Path $_.FullName 'x64/Microsoft.VC143.CRT' } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $redist) { throw 'The redistributable C++ runtime is missing from Visual Studio.' }
 $openmp = Join-Path (Split-Path $redist) 'Microsoft.VC143.OpenMP'
-$env:HANDY_VC_REDIST_DIRS = if (Test-Path -LiteralPath $openmp) { "$redist;$openmp" } else { $redist }
+$env:PLOT_FLOW_VC_REDIST_DIRS = if (Test-Path -LiteralPath $openmp) { "$redist;$openmp" } else { $redist }
 if (-not $env:VULKAN_SDK) {
     $sdk = Get-ChildItem 'C:/VulkanSDK' -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
     if ($sdk) { $env:VULKAN_SDK = $sdk.FullName }

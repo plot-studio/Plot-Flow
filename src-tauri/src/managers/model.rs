@@ -267,11 +267,11 @@ pub enum EngineType {
     Cohere,
 }
 
-/// Where a model comes from and how Handy obtains it — the routing discriminant
+/// Where a model comes from and how Plot Flow obtains it — the routing discriminant
 /// for downloading and on-disk resolution.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub enum ModelSource {
-    /// Direct HTTP download from a URL (current blob.handy.computer hosting).
+    /// Direct HTTP download from a URL (plain HTTPS mirror hosting).
     Url {
         url: String,
         /// Expected SHA-256 for integrity verification; `None` skips it.
@@ -613,7 +613,7 @@ fn local_caps(probe: &CapabilityProbe) -> LocalCaps {
     }
 }
 
-/// Bridges hf-hub's async download progress to Handy's `model-download-progress`
+/// Bridges hf-hub's async download progress to Plot Flow's `model-download-progress`
 /// event. hf-hub clones the reporter, so shared state lives behind an `Arc`.
 #[derive(Clone)]
 struct HfDownloadProgress {
@@ -1118,7 +1118,7 @@ impl ModelManager {
 
             // Probe GGUF headers for advertised capabilities so a dropped-in
             // model surfaces streaming / translation / languages just like a
-            // Handy-downloaded one. Legacy `.bin` files have no GGUF header, so
+            // Plot Flow-downloaded one. Legacy `.bin` files have no GGUF header, so
             // they stay "unknown" until transcribe-cpp reconciles them at load.
             let probe = if is_gguf {
                 GgufHeaderProber.probe_file(&path)
@@ -1164,7 +1164,7 @@ impl ModelManager {
     }
 
     /// Discover transcribe-cpp-compatible GGUF models already present in the
-    /// shared Hugging Face cache, so models downloaded by Handy (or any other
+    /// shared Hugging Face cache, so models downloaded by Plot Flow (or any other
     /// tool) appear in "Your Models" without re-downloading. Only architectures
     /// transcribe-cpp recognises are surfaced; arbitrary (e.g. LLM) GGUFs that
     /// share the cache are ignored.
@@ -1887,7 +1887,7 @@ impl ModelManager {
                     deleted = true;
                 }
             }
-            // Files already missing (e.g. removed outside Handy) is not a failure —
+            // Files already missing (e.g. removed outside Plot Flow) is not a failure —
             // deleting is idempotent, so this still needs to fall through and clear
             // the stale "Downloaded" entry rather than erroring out and leaving it stuck.
             if !deleted {
@@ -1942,7 +1942,7 @@ impl ModelManager {
             deleted_something = true;
         }
 
-        // Files already missing (e.g. removed outside Handy) is not a failure —
+        // Files already missing (e.g. removed outside Plot Flow) is not a failure —
         // deleting is idempotent, so this still needs to fall through and clear
         // the stale "Downloaded" entry rather than erroring out and leaving it stuck.
         if !deleted_something {
@@ -2441,7 +2441,7 @@ mod tests {
         let root = tmp.path();
 
         // ASR repo: a whisper gguf -> should be discovered.
-        let repo = root.join("models--handy-computer--whisper-test");
+        let repo = root.join("models--example-org--whisper-test");
         fs::create_dir_all(repo.join("snapshots").join("abc123")).unwrap();
         fs::create_dir_all(repo.join("refs")).unwrap();
         fs::write(repo.join("refs").join("main"), "abc123").unwrap();
@@ -2468,12 +2468,12 @@ mod tests {
         let mut models = HashMap::new();
         ModelManager::discover_hf_cache_models_in(root, &mut models);
 
-        let id = "handy-computer/whisper-test/whisper-q8.gguf";
+        let id = "example-org/whisper-test/whisper-q8.gguf";
         let m = models.get(id).expect("whisper gguf should be discovered");
         assert!(m.is_downloaded);
         assert!(
             matches!(&m.source, ModelSource::HuggingFace { repo_id, revision }
-            if repo_id == "handy-computer/whisper-test" && revision == "main")
+            if repo_id == "example-org/whisper-test" && revision == "main")
         );
         assert_eq!(
             m.supported_languages,

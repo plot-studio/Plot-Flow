@@ -40,18 +40,20 @@ export function MonoActivityHeatmap({
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(
     null,
   );
+  // Tooltip sits next to the hovered cell (like the line chart's), on the
+  // right of it, or on the left when it would leave the window.
   const showDay = (date: string, cell: HTMLElement) => {
-    const bounds = cell.closest("[data-chart]")!.getBoundingClientRect();
+    const rect = cell.getBoundingClientRect();
+    const width = 220;
+    const height = 120;
+    const gap = 10;
+    const fitsRight = rect.right + gap + width <= window.innerWidth - 8;
+    const left = fitsRight ? rect.right + gap : rect.left - gap - width;
+    const top = rect.top + rect.height / 2 - height / 2;
     setHoveredDate(date);
     setAnchor({
-      left: Math.max(8, Math.min(window.innerWidth - 228, bounds.left)),
-      top: Math.max(
-        8,
-        Math.min(
-          window.innerHeight - 160,
-          bounds.top >= 168 ? bounds.top - 160 : bounds.bottom + 8,
-        ),
-      ),
+      left: Math.max(8, Math.min(window.innerWidth - width - 8, left)),
+      top: Math.max(8, Math.min(window.innerHeight - height - 8, top)),
     });
   };
   useEffect(() => {

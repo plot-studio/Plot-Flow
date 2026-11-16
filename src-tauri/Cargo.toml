@@ -1,8 +1,8 @@
 [package]
 name = "plot-flow"
-version = "1.6.0"
+version = "1.6.1"
 description = "Plot Flow"
-authors = ["cjpais"]
+authors = ["Plot Studio"]
 edition = "2021"
 license = "MIT"
 default-run = "plot-flow"
@@ -152,7 +152,7 @@ winreg = "0.55"
 # buys nothing on ARM — ALL_VARIANTS is an x86 concept, so a DL build there is
 # just a single portable CPU module shipped as a DLL. So ARM links transcribe-cpp
 # STATICALLY (no features = static CPU-only): the one CPU backend is compiled into
-# handy.exe and we ship zero DLLs, which sidesteps the installer's per-DLL
+# plot-flow.exe and we ship zero DLLs, which sidesteps the installer's per-DLL
 # signtool verify entirely. CI pins -DGGML_NATIVE=OFF (see build.yml) so the
 # static build targets a portable ARM baseline, not the build runner's CPU.
 [target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
@@ -191,7 +191,7 @@ transcribe-cpp = { version = "0.2.3", default-features = false, features = [
 # tao #1231 (removed window subclassing), which left the thread event target's
 # WNDPROC falling through to DefSubclassProc. On a no-longer-subclassed window
 # that returns 0, so WM_QUERYENDSESSION answered FALSE and vetoed Windows
-# shutdown (Handy #1710). `handy` = 07f3742b + a cherry-pick of tao #1274
+# shutdown (upstream issue #1710). The pinned rev = 07f3742b + a cherry-pick of tao #1274
 # (DefSubclassProc → DefWindowProcW). Repoint at upstream once #1274 merges.
 #
 # tao-macros must be patched to the SAME rev even though nothing here depends on

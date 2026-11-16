@@ -60,7 +60,7 @@ fn native_windows_machine() -> Option<u16> {
 
     type IsWow64Process2 = unsafe extern "system" fn(HANDLE, *mut u16, *mut u16) -> BOOL;
 
-    // Resolve IsWow64Process2 dynamically so merely starting Handy never raises
+    // Resolve IsWow64Process2 dynamically so merely starting Plot Flow never raises
     // the minimum Windows version. Windows-on-ARM versions provide this API,
     // while a missing symbol or failed query safely preserves the x64 behavior.
     unsafe {
@@ -151,12 +151,31 @@ pub fn is_gnome_wayland() -> bool {
     is_wayland() && is_gnome()
 }
 
+/// Prefix of our own environment switches.
+const ENV_PREFIX: &str = "PLOT_FLOW_";
+
+/// Prefix the same switches used before the rebrand; still honoured as a
+/// silent fallback so existing scripts and shortcuts keep working.
+const LEGACY_ENV_PREFIX: &str = "HANDY_";
+
+/// Read an environment variable. For `PLOT_FLOW_*` names the legacy-prefixed
+/// variable is consulted when the new one is unset; the new name always wins.
+pub fn env_var(name: &str) -> Result<String, std::env::VarError> {
+    match std::env::var(name) {
+        Err(std::env::VarError::NotPresent) => match name.strip_prefix(ENV_PREFIX) {
+            Some(rest) => std::env::var(format!("{LEGACY_ENV_PREFIX}{rest}")),
+            None => Err(std::env::VarError::NotPresent),
+        },
+        other => other,
+    }
+}
+
 /// Returns true when the environment variable is set to a truthy value
 /// (e.g. "1", "true", "yes", "on").
 /// "0", "false", "no", "off" and empty string are treated as falsy (case-insensitive).
 /// Returns false when the variable is not set.
 pub fn env_flag_enabled(name: &str) -> bool {
-    match std::env::var(name) {
+    match env_var(name) {
         Ok(v) => !matches!(
             v.trim().to_ascii_lowercase().as_str(),
             "" | "0" | "false" | "no" | "off"
@@ -180,20 +199,35 @@ mod tests {
     #[test]
     fn env_flag_enabled_true_for_truthy_values() {
         for value in ["1", "true", "TRUE", "yes", "on", " 1 "] {
-            std::env::set_var("HANDY_TEST_FLAG_TRUTHY", value);
-            assert!(env_flag_enabled("HANDY_TEST_FLAG_TRUTHY"), "{value:?}");
+            std::env::set_var("PLOT_FLOW_TEST_FLAG_TRUTHY", value);
+            assert!(env_flag_enabled("PLOT_FLOW_TEST_FLAG_TRUTHY"), "{value:?}");
         }
-        std::env::remove_var("HANDY_TEST_FLAG_TRUTHY");
+        std::env::remove_var("PLOT_FLOW_TEST_FLAG_TRUTHY");
     }
 
     #[test]
     fn env_flag_enabled_false_for_falsy_or_unset() {
-        assert!(!env_flag_enabled("HANDY_TEST_FLAG_UNSET"));
+        assert!(!env_flag_enabled("PLOT_FLOW_TEST_FLAG_UNSET"));
 
         for value in ["0", "false", "FALSE", "no", "off", ""] {
-            std::env::set_var("HANDY_TEST_FLAG_FALSY", value);
-            assert!(!env_flag_enabled("HANDY_TEST_FLAG_FALSY"), "{value:?}");
+            std::env::set_var("PLOT_FLOW_TEST_FLAG_FALSY", value);
+            assert!(!env_flag_enabled("PLOT_FLOW_TEST_FLAG_FALSY"), "{value:?}");
         }
-        std::env::remove_var("HANDY_TEST_FLAG_FALSY");
+        std::env::remove_var("PLOT_FLOW_TEST_FLAG_FALSY");
+    }
+
+    #[test]
+    fn env_var_falls_back_to_legacy_prefix() {
+        let legacy = format!("{LEGACY_ENV_PREFIX}TEST_FLAG_LEGACY");
+        std::env::remove_var("PLOT_FLOW_TEST_FLAG_LEGACY");
+        std::env::set_var(&legacy, "1");
+        assert!(env_flag_enabled("PLOT_FLOW_TEST_FLAG_LEGACY"));
+
+        // The new name wins when both are set.
+        std::env::set_var("PLOT_FLOW_TEST_FLAG_LEGACY", "0");
+        assert!(!env_flag_enabled("PLOT_FLOW_TEST_FLAG_LEGACY"));
+
+        std::env::remove_var("PLOT_FLOW_TEST_FLAG_LEGACY");
+        std::env::remove_var(&legacy);
     }
 }

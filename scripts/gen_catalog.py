@@ -3,7 +3,7 @@
 # dependencies = ["huggingface_hub", "fsspec"]
 # ///
 """
-Handy model catalog generator.
+Plot Flow model catalog generator.
 
 Merges three sources into one catalog.json:
   1. HF card `transcribe_cpp` block  -> capabilities + benchmarks (canonical)
@@ -17,6 +17,7 @@ import json, os, re, sys, math, struct, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from huggingface_hub import HfApi, HfFileSystem
 
+# Hugging Face org that publishes the GGUF model repos (external source).
 ORG = "handy-computer"
 CATALOG_VERSION = 2
 
@@ -56,7 +57,7 @@ CURATION = {
     "Fun-ASR-MLT-Nano-2512":           {"rank": 10, "desc": "A tiny multilingual model"},
     # description-only (unranked, not recommended) — carried over from the legacy .bin entry
     "Breeze-ASR-25":                   {"desc": "Optimized for Taiwanese Mandarin. Code-switching support."},
-    # Sortformer emits speaker segments only; Handy's catalog is for models
+    # Sortformer emits speaker segments only; Plot Flow's catalog is for models
     # that produce transcription text.
     "diar_streaming_sortformer_4spk-v2.1": {"hidden": True},
 }

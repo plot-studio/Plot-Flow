@@ -71,20 +71,24 @@ pub struct HistoryManager {
     db_path: PathBuf,
 }
 
+/// File-name prefix of recordings saved before the rebrand. Kept only so the
+/// one-time migration below can find and rename them to `plot-flow-*.wav`.
+const LEGACY_RECORDING_PREFIX: &str = "handy-";
+
 fn migrate_recording_names(conn: &Connection, directory: &std::path::Path) -> Result<()> {
     conn.execute_batch("CREATE TABLE IF NOT EXISTS plot_flow_recording_renames (old_name TEXT PRIMARY KEY, new_name TEXT NOT NULL);")?;
     let names: Vec<String> = conn
         .prepare(
-            "SELECT DISTINCT file_name FROM transcription_history WHERE file_name LIKE 'handy-%'",
+            "SELECT DISTINCT file_name FROM transcription_history WHERE file_name LIKE ?1 || '%'",
         )?
-        .query_map([], |row| row.get(0))?
+        .query_map([LEGACY_RECORDING_PREFIX], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     for old_name in names {
         // A database value must never escape the recordings directory.
         if old_name.contains('/') || old_name.contains('\\') {
             continue;
         }
-        let Some(suffix) = old_name.strip_prefix("handy-") else {
+        let Some(suffix) = old_name.strip_prefix(LEGACY_RECORDING_PREFIX) else {
             continue;
         };
         if !suffix.strip_suffix(".wav").is_some_and(|stamp| {
@@ -159,6 +163,11 @@ fn migrate_recording_names(conn: &Connection, directory: &std::path::Path) -> Re
 mod plot_flow_recording_tests {
     use super::*;
 
+    /// A recording name in the pre-rebrand format.
+    fn legacy() -> String {
+        format!("{LEGACY_RECORDING_PREFIX}123.wav")
+    }
+
     fn database() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
@@ -166,8 +175,8 @@ mod plot_flow_recording_tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO transcription_history VALUES ('handy-123.wav', 'keep this text')",
-            [],
+            "INSERT INTO transcription_history VALUES (?1, 'keep this text')",
+            [legacy()],
         )
         .unwrap();
         conn
@@ -177,14 +186,14 @@ mod plot_flow_recording_tests {
     fn plot_flow_recording_names_preserve_audio_and_text() {
         let directory = tempfile::tempdir().unwrap();
         let conn = database();
-        fs::write(directory.path().join("handy-123.wav"), b"original audio").unwrap();
+        fs::write(directory.path().join(legacy()), b"original audio").unwrap();
         migrate_recording_names(&conn, directory.path()).unwrap();
         migrate_recording_names(&conn, directory.path()).unwrap();
         assert_eq!(
             fs::read(directory.path().join("plot-flow-123.wav")).unwrap(),
             b"original audio"
         );
-        assert!(!directory.path().join("handy-123.wav").exists());
+        assert!(!directory.path().join(legacy()).exists());
         let row: (String, String) = conn
             .query_row(
                 "SELECT file_name, transcription_text FROM transcription_history",
@@ -199,7 +208,7 @@ mod plot_flow_recording_tests {
     fn plot_flow_recording_name_collision_does_not_overwrite() {
         let directory = tempfile::tempdir().unwrap();
         let conn = database();
-        fs::write(directory.path().join("handy-123.wav"), b"old audio").unwrap();
+        fs::write(directory.path().join(legacy()), b"old audio").unwrap();
         fs::write(
             directory.path().join("plot-flow-123.wav"),
             b"different audio",
@@ -207,7 +216,7 @@ mod plot_flow_recording_tests {
         .unwrap();
         migrate_recording_names(&conn, directory.path()).unwrap();
         assert_eq!(
-            fs::read(directory.path().join("handy-123.wav")).unwrap(),
+            fs::read(directory.path().join(legacy())).unwrap(),
             b"old audio"
         );
         assert_eq!(
@@ -219,7 +228,7 @@ mod plot_flow_recording_tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(name, "handy-123.wav");
+        assert_eq!(name, legacy());
     }
 
     #[test]
@@ -239,8 +248,8 @@ mod plot_flow_recording_tests {
         migrate_recording_names(&conn, directory.path()).unwrap();
         let count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM transcription_history WHERE file_name = 'handy-123.wav'",
-                [],
+                "SELECT COUNT(*) FROM transcription_history WHERE file_name = ?1",
+                [legacy()],
                 |row| row.get(0),
             )
             .unwrap();
@@ -262,8 +271,8 @@ mod plot_flow_recording_tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO plot_flow_recording_renames VALUES ('handy-123.wav', 'plot-flow-123.wav')",
-            [],
+            "INSERT INTO plot_flow_recording_renames VALUES (?1, 'plot-flow-123.wav')",
+            [legacy()],
         )
         .unwrap();
         migrate_recording_names(&conn, directory.path()).unwrap();
@@ -287,11 +296,11 @@ mod plot_flow_recording_tests {
     fn plot_flow_failed_database_update_rolls_audio_back() {
         let directory = tempfile::tempdir().unwrap();
         let conn = database();
-        fs::write(directory.path().join("handy-123.wav"), b"original audio").unwrap();
+        fs::write(directory.path().join(legacy()), b"original audio").unwrap();
         conn.execute_batch("CREATE TRIGGER block_rename BEFORE UPDATE ON transcription_history BEGIN SELECT RAISE(FAIL, 'blocked'); END;").unwrap();
         assert!(migrate_recording_names(&conn, directory.path()).is_err());
         assert_eq!(
-            fs::read(directory.path().join("handy-123.wav")).unwrap(),
+            fs::read(directory.path().join(legacy())).unwrap(),
             b"original audio"
         );
         assert!(!directory.path().join("plot-flow-123.wav").exists());
