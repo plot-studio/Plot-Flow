@@ -3,12 +3,10 @@ import { useEffect, useState } from "react";
 // Follow the same explicit data-theme / OS preference used by App.css.
 export function useStatisticsTheme(): "dark" | "light" {
   const read = () => {
-    const explicit = document.documentElement.dataset.theme;
-    return explicit === "dark" ||
-      (explicit !== "light" &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches)
-      ? "dark"
-      : "light";
+    // Dark is the app default; light only when explicitly chosen.
+    return document.documentElement.dataset.theme === "light"
+      ? "light"
+      : "dark";
   };
   const [theme, setTheme] = useState<"dark" | "light">(read);
   useEffect(() => {

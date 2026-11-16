@@ -37,13 +37,13 @@
   --light-s-hair: color-mix(in srgb, var(--color-mid-gray) 12%, transparent);
   --dark-s-hair: color-mix(in srgb, var(--color-text) 8%, transparent);
 
-  /* Active neutrals — default light, flipped by the media query below or forced
-     by `data-theme`. */
-  --s-accent-soft: var(--light-s-accent-soft);
-  --s-muted: var(--light-s-muted);
-  --s-faint: var(--light-s-faint);
-  --s-border: var(--light-s-border);
-  --s-hair: var(--light-s-hair);
+  /* Active neutrals — default dark (matches theme.css, where dark is the
+     default palette); light only when forced by `data-theme="light"`. */
+  --s-accent-soft: var(--dark-s-accent-soft);
+  --s-muted: var(--dark-s-muted);
+  --s-faint: var(--dark-s-faint);
+  --s-border: var(--dark-s-border);
+  --s-hair: var(--dark-s-hair);
 
   /* Card geometry — single source of truth for the visible overlay sizes. The
      native overlay window (overlay.rs) is sized from these: it must be at least
@@ -59,16 +59,6 @@
   --ov-base-h: 40px; /* control-row height (.sbase) */
   --ov-cap-max-h: 64px; /* max height of the scrolling live-text region */
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --s-accent-soft: var(--dark-s-accent-soft);
-    --s-muted: var(--dark-s-muted);
-    --s-faint: var(--dark-s-faint);
-    --s-border: var(--dark-s-border);
-    --s-hair: var(--dark-s-hair);
-  }
-}
-
 /*
  * Explicit theme override, matching the `data-theme` blocks in theme.css.
  * `--s-surface` and `--s-accent` honour the setting for free because they derive
@@ -218,6 +208,16 @@
 }
 .scard.compact.cworking {
   width: var(--ov-work-w);
+}
+/* Smart-insert notice ("Text saved — press Ctrl+V"): a wider pill so the full
+   hint fits. Window width is OVERLAY_SAVED_WIDTH in overlay.rs. */
+.scard.compact.csaved {
+  width: 392px;
+}
+.ssaved-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--s-accent);
 }
 
 /* text region — auto-height open via grid-rows trick; region fades as a whole */

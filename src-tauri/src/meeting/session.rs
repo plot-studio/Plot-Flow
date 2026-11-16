@@ -9,6 +9,7 @@
 //!
 //! Audio threads never block on the worker: jobs are sent with `try_send`.
 
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
@@ -32,12 +33,19 @@ use crate::managers::transcription::TranscriptionManager;
 pub const SAMPLE_RATE: u64 = 16_000;
 /// Silero frame length.
 const FRAME_MS: u64 = 30;
+/// 16 kHz samples per processing frame.
+const FRAME_SAMPLES: u64 = SAMPLE_RATE * FRAME_MS / 1000;
 /// Silence that ends a speech run.
 const END_SILENCE_MS: u64 = 600;
-/// Hard cap of one segment.
-const MAX_SEGMENT_MS: u64 = 20_000;
-/// Runs shorter than this (clicks, coughs) are not transcribed.
-const MIN_SEGMENT_MS: u64 = 400;
+/// Past this length a run is cut at the first quiet frame (a short pause).
+const SOFT_MAX_SEGMENT_MS: u64 = 15_000;
+/// Hard cap of one segment (GigaAM's window is 25 s).
+const HARD_MAX_SEGMENT_MS: u64 = 22_000;
+/// A frame quieter than this share of the run's mean RMS counts as a pause.
+const QUIET_FRAME_RATIO: f32 = 0.3;
+/// Runs with less *voiced* audio than this (clicks, coughs) are not
+/// transcribed. Pre-roll and the hangover tail do not count.
+const MIN_VOICED_MS: u64 = 240;
 /// Pre-roll kept before detected speech onset.
 const PREFILL_MS: u64 = 300;
 /// Voiced time needed to confirm speech onset.
@@ -55,8 +63,31 @@ const IDLE_FLUSH: Duration = Duration::from_millis(800);
 /// A gap between the session clock and the delivered audio larger than this is
 /// treated as silence the device did not deliver.
 const GAP_TOLERANCE_SAMPLES: u64 = SAMPLE_RATE / 2;
+/// The gap jump is only applied when the device really paused delivery for at
+/// least this long; otherwise the difference is clock drift and is ignored.
+const GAP_MIN_IDLE: Duration = Duration::from_millis(400);
+/// How often the capture thread checks for a lost or switched device.
+const DEVICE_CHECK_PERIOD: Duration = Duration::from_secs(2);
+/// Per-frame level history kept per source (for the echo rule), ≈ 30 s.
+const LEVEL_HISTORY_FRAMES: usize = 1_000;
+/// Echo rule: the system track counts as "active" above this meter level
+/// (≈ -36 dBFS).
+const ECHO_SYSTEM_ACTIVE_LEVEL: f32 = 0.4;
+/// Echo rule: the system level must exceed the mic level by this much (≈ 3 dB).
+const ECHO_LEVEL_MARGIN: f32 = 0.05;
+/// Echo rule: share of the mic run's frames that must satisfy both conditions.
+const ECHO_MAJORITY: f32 = 0.75;
+/// Echo rule: shorter mic runs are never treated as echo.
+const ECHO_MIN_FRAMES: usize = 8;
+/// Retries of a failed recognition (the engine may be busy or reloading).
+const TRANSCRIBE_RETRIES: u32 = 3;
+const TRANSCRIBE_RETRY_BACKOFF: Duration = Duration::from_secs(2);
+/// Text stored for a segment whose recognition failed for good.
+const UNRECOGNIZED_TEXT: &str = "[не распознано]";
 /// Status event period.
 const STATUS_PERIOD: Duration = Duration::from_millis(250);
+/// How long `spawn_source` waits for the device to open.
+const SOURCE_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn samples_to_ms(samples: u64) -> u64 {
     samples * 1000 / SAMPLE_RATE
@@ -64,6 +95,14 @@ fn samples_to_ms(samples: u64) -> u64 {
 
 fn ms_to_samples(ms: u64) -> u64 {
     ms * SAMPLE_RATE / 1000
+}
+
+fn rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
+    (sum_sq / samples.len() as f32).sqrt()
 }
 
 /* ───────────────────────────── Segmenter ───────────────────────────── */
@@ -74,6 +113,8 @@ pub struct SpeechRun {
     /// Start position in 16 kHz samples since the meeting start.
     pub start: u64,
     pub samples: Vec<f32>,
+    /// Samples the raw VAD classified as voice (excludes pre-roll/hangover).
+    pub voiced_samples: u64,
 }
 
 impl SpeechRun {
@@ -84,51 +125,164 @@ impl SpeechRun {
     pub fn t1_ms(&self) -> u64 {
         samples_to_ms(self.start + self.samples.len() as u64)
     }
+
+    pub fn voiced_ms(&self) -> u64 {
+        samples_to_ms(self.voiced_samples)
+    }
 }
 
 /// Turns the smoothed VAD's speech/noise stream into bounded speech runs.
 ///
 /// The smoothed VAD already adds pre-roll and a hangover tail of
 /// [`END_SILENCE_MS`], so the first `Noise` after speech means "≥600 ms of
-/// silence"; a run is also cut when it reaches `max_samples`.
+/// silence". Long runs are cut: past `soft_max_samples` at the first quiet
+/// frame (unvoiced, or much quieter than the run so far), and unconditionally
+/// at `hard_max_samples`.
 pub struct Segmenter {
-    max_samples: usize,
+    soft_max_samples: usize,
+    hard_max_samples: usize,
     current: Option<SpeechRun>,
+    /// Sum of squares of the open run (for its mean RMS).
+    energy: f64,
 }
 
 impl Segmenter {
-    pub fn new(max_samples: usize) -> Self {
+    pub fn new(soft_max_samples: usize, hard_max_samples: usize) -> Self {
+        let hard_max_samples = hard_max_samples.max(1);
         Self {
-            max_samples: max_samples.max(1),
+            soft_max_samples: soft_max_samples.clamp(1, hard_max_samples),
+            hard_max_samples,
             current: None,
+            energy: 0.0,
         }
     }
 
-    /// Feed a speech slice that ends at absolute position `end_pos`.
-    pub fn push_speech(&mut self, end_pos: u64, slice: &[f32]) -> Option<SpeechRun> {
+    /// Feed a speech slice that ends at absolute position `end_pos`;
+    /// `voiced_samples` is how much of it the raw VAD heard as voice.
+    pub fn push_speech(
+        &mut self,
+        end_pos: u64,
+        slice: &[f32],
+        voiced_samples: usize,
+    ) -> Option<SpeechRun> {
         let run = self.current.get_or_insert_with(|| SpeechRun {
             start: end_pos.saturating_sub(slice.len() as u64),
             samples: Vec::with_capacity(16_000 * 4),
+            voiced_samples: 0,
         });
+        let mean_rms = if run.samples.is_empty() {
+            0.0
+        } else {
+            (self.energy / run.samples.len() as f64).sqrt() as f32
+        };
+        let slice_rms = rms(slice);
+        let quiet = voiced_samples == 0 || slice_rms < mean_rms * QUIET_FRAME_RATIO;
+
         run.samples.extend_from_slice(slice);
-        if run.samples.len() >= self.max_samples {
-            return self.current.take();
+        run.voiced_samples += voiced_samples as u64;
+        self.energy += slice.iter().map(|s| (*s as f64) * (*s as f64)).sum::<f64>();
+
+        let len = run.samples.len();
+        if len >= self.hard_max_samples || (len >= self.soft_max_samples && quiet) {
+            return self.take();
         }
         None
     }
 
     /// Feed a non-speech decision: closes the open run, if any.
     pub fn push_noise(&mut self) -> Option<SpeechRun> {
-        self.current.take()
+        self.take()
     }
 
     /// Close the open run (pause, stop, gap in the device stream).
     pub fn flush(&mut self) -> Option<SpeechRun> {
+        self.take()
+    }
+
+    fn take(&mut self) -> Option<SpeechRun> {
+        self.energy = 0.0;
         self.current.take()
     }
 
     pub fn has_open_run(&self) -> bool {
         self.current.is_some()
+    }
+}
+
+/* ───────────────────────────── Gap & echo rules ───────────────────────────── */
+
+/// Where the source position should jump to when the device paused delivery
+/// (loopback during silence), or `None` to keep counting samples.
+///
+/// `idle` is how long no audio arrived before this batch. Without a real
+/// pause the difference between the wall clock and the sample count is just
+/// clock drift and is ignored (jumping would cut a run mid-word).
+fn gap_realign(pos: u64, batch_16k: u64, clock_pos: u64, idle: Duration) -> Option<u64> {
+    if idle < GAP_MIN_IDLE {
+        return None;
+    }
+    if clock_pos > pos + batch_16k + GAP_TOLERANCE_SAMPLES {
+        Some(clock_pos - batch_16k)
+    } else {
+        None
+    }
+}
+
+/// Conservative echo test for a microphone run without headphones: the
+/// remote voice played by the speakers reaches the mic, but the loopback
+/// track carries it louder. `mic` and `sys` are `(frame index, meter level)`
+/// over the run's span. The run is echo only when, for most of its frames,
+/// the system track was active *and* louder than the mic.
+pub fn is_probable_echo(mic: &[(u64, f32)], sys: &[(u64, f32)]) -> bool {
+    if mic.len() < ECHO_MIN_FRAMES || sys.is_empty() {
+        return false;
+    }
+    let sys_levels: HashMap<u64, f32> = sys.iter().copied().collect();
+    let mut active = 0usize;
+    let mut dominated = 0usize;
+    for &(index, mic_level) in mic {
+        let level = sys_levels
+            .get(&index)
+            .or_else(|| sys_levels.get(&index.wrapping_sub(1)))
+            .or_else(|| sys_levels.get(&(index + 1)));
+        let Some(&sys_level) = level else {
+            continue;
+        };
+        if sys_level >= ECHO_SYSTEM_ACTIVE_LEVEL {
+            active += 1;
+            if sys_level > mic_level + ECHO_LEVEL_MARGIN {
+                dominated += 1;
+            }
+        }
+    }
+    let needed = (mic.len() as f32 * ECHO_MAJORITY).ceil() as usize;
+    active >= needed && dominated >= needed
+}
+
+/// Recent per-frame levels of one source.
+#[derive(Default)]
+struct LevelHistory {
+    frames: VecDeque<(u64, f32)>,
+}
+
+impl LevelHistory {
+    fn push(&mut self, index: u64, level: f32) {
+        if self.frames.len() >= LEVEL_HISTORY_FRAMES {
+            self.frames.pop_front();
+        }
+        self.frames.push_back((index, level));
+    }
+
+    fn between(&self, from: u64, to: u64) -> Vec<(u64, f32)> {
+        self.frames
+            .iter()
+            .filter(|(index, _)| (from..=to).contains(index))
+            .copied()
+            .collect()
+    }
+
+    fn clear(&mut self) {
+        self.frames.clear();
     }
 }
 
@@ -191,6 +345,13 @@ fn state_from_u8(value: u8) -> MeetingState {
     }
 }
 
+fn source_index(source: MeetingSource) -> usize {
+    match source {
+        MeetingSource::Microphone => 0,
+        MeetingSource::System => 1,
+    }
+}
+
 /// State shared by all threads of one meeting.
 pub struct SessionShared {
     pub meeting_id: i64,
@@ -201,9 +362,13 @@ pub struct SessionShared {
     stop_ticker: AtomicBool,
     /// Meeting is being discarded: the worker skips remaining jobs.
     pub discard: AtomicBool,
+    /// The app is exiting: the worker stops retrying failed jobs.
+    pub exiting: AtomicBool,
     clock: Mutex<SessionClock>,
     mic_level: AtomicU32,
     system_level: AtomicU32,
+    /// Per-frame levels of each source, indexed by [`source_index`].
+    level_history: [Mutex<LevelHistory>; 2],
     segment_count: AtomicU32,
     last_error: Mutex<Option<String>>,
 }
@@ -216,9 +381,14 @@ impl SessionShared {
             stop_capture: AtomicBool::new(false),
             stop_ticker: AtomicBool::new(false),
             discard: AtomicBool::new(false),
+            exiting: AtomicBool::new(false),
             clock: Mutex::new(SessionClock::new(Instant::now())),
             mic_level: AtomicU32::new(0),
             system_level: AtomicU32::new(0),
+            level_history: [
+                Mutex::new(LevelHistory::default()),
+                Mutex::new(LevelHistory::default()),
+            ],
             segment_count: AtomicU32::new(0),
             last_error: Mutex::new(None),
         }
@@ -278,6 +448,25 @@ impl SessionShared {
             MeetingSource::System => &self.system_level,
         };
         f32::from_bits(slot.load(Ordering::Relaxed))
+    }
+
+    fn record_frame_level(&self, source: MeetingSource, frame_index: u64, level: f32) {
+        if let Ok(mut history) = self.level_history[source_index(source)].lock() {
+            history.push(frame_index, level);
+        }
+    }
+
+    fn frame_levels(&self, source: MeetingSource, from: u64, to: u64) -> Vec<(u64, f32)> {
+        self.level_history[source_index(source)]
+            .lock()
+            .map(|history| history.between(from, to))
+            .unwrap_or_default()
+    }
+
+    fn clear_frame_levels(&self, source: MeetingSource) {
+        if let Ok(mut history) = self.level_history[source_index(source)].lock() {
+            history.clear();
+        }
     }
 
     pub fn set_error(&self, message: impl Into<String>) {
@@ -350,7 +539,7 @@ pub struct SegmentJob {
     pub samples: Vec<f32>,
 }
 
-/// Everything a processing thread needs besides its stream.
+/// Everything a processing thread needs besides its stream and job queue.
 #[derive(Clone)]
 pub struct SourceContext {
     pub app: AppHandle,
@@ -361,7 +550,6 @@ pub struct SourceContext {
     pub audio_dir: PathBuf,
     pub vad_model_path: PathBuf,
     pub selected_microphone: Option<String>,
-    pub jobs: SyncSender<SegmentJob>,
 }
 
 /// Resolve the bundled Silero model the same way `managers::audio` does.
@@ -374,12 +562,43 @@ pub fn resolve_vad_model(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("Не найдена модель VAD: {e}"))
 }
 
-fn build_vad(model_path: &PathBuf) -> Result<SmoothedVad, String> {
+/// Silero wrapper that remembers its last raw decision, so the processing
+/// thread can tell real voice from the smoothed VAD's pre-roll/hangover.
+struct TappedVad {
+    inner: SileroVad,
+    last_voice: Arc<AtomicBool>,
+}
+
+impl VoiceActivityDetector for TappedVad {
+    fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> anyhow::Result<VadFrame<'a>> {
+        let voice = self.inner.push_frame(frame)?.is_speech();
+        self.last_voice.store(voice, Ordering::Relaxed);
+        Ok(if voice {
+            VadFrame::Speech(frame)
+        } else {
+            VadFrame::Noise
+        })
+    }
+
+    fn frame_samples(&self) -> usize {
+        self.inner.frame_samples()
+    }
+
+    fn reset(&mut self) {
+        self.last_voice.store(false, Ordering::Relaxed);
+        self.inner.reset();
+    }
+}
+
+fn build_vad(model_path: &PathBuf, last_voice: Arc<AtomicBool>) -> Result<SmoothedVad, String> {
     let silero = SileroVad::new(model_path, SILERO_THRESHOLD)
         .map_err(|e| format!("Не удалось создать VAD: {e}"))?;
     let frame_samples = silero.frame_samples();
     Ok(SmoothedVad::new(
-        Box::new(silero),
+        Box::new(TappedVad {
+            inner: silero,
+            last_voice,
+        }),
         frames_for_duration_ms(PREFILL_MS, frame_samples),
         frames_for_duration_ms(END_SILENCE_MS, frame_samples),
         frames_for_duration_ms(ONSET_MS, frame_samples),
@@ -445,7 +664,10 @@ impl WavChunker {
 
 struct SourceProcessor {
     ctx: SourceContext,
+    jobs: SyncSender<SegmentJob>,
     vad: SmoothedVad,
+    /// Last raw (unsmoothed) Silero decision, written by [`TappedVad`].
+    raw_voice: Arc<AtomicBool>,
     vad_failed: bool,
     segmenter: Segmenter,
     wav: WavChunker,
@@ -461,11 +683,23 @@ impl SourceProcessor {
         let instant = capture::meter_level(frame);
         self.level = instant.max(self.level * 0.85);
         self.ctx.shared.set_level(self.ctx.source, self.level);
+        self.ctx.shared.record_frame_level(
+            self.ctx.source,
+            self.pos.saturating_sub(1) / FRAME_SAMPLES,
+            instant,
+        );
 
         self.wav.push(frame);
 
         let finished = match self.vad.push_frame(frame) {
-            Ok(VadFrame::Speech(slice)) => self.segmenter.push_speech(self.pos, slice),
+            Ok(VadFrame::Speech(slice)) => {
+                let voiced = if self.raw_voice.load(Ordering::Relaxed) {
+                    frame.len()
+                } else {
+                    0
+                };
+                self.segmenter.push_speech(self.pos, slice, voiced)
+            }
             Ok(VadFrame::Noise) => self.segmenter.push_noise(),
             Err(e) => {
                 if !self.vad_failed {
@@ -488,9 +722,32 @@ impl SourceProcessor {
         self.vad.reset();
     }
 
+    /// True when a microphone run is most likely the remote voice coming out
+    /// of the speakers (no headphones).
+    fn is_echo(&self, run: &SpeechRun) -> bool {
+        if self.ctx.source != MeetingSource::Microphone || run.samples.is_empty() {
+            return false;
+        }
+        let from = run.start / FRAME_SAMPLES;
+        let to = (run.start + run.samples.len() as u64 - 1) / FRAME_SAMPLES;
+        let shared = &self.ctx.shared;
+        let mic = shared.frame_levels(MeetingSource::Microphone, from, to);
+        let sys = shared.frame_levels(MeetingSource::System, from.saturating_sub(1), to + 1);
+        is_probable_echo(&mic, &sys)
+    }
+
     /// Persist a tentative segment and queue it for recognition.
     fn dispatch(&mut self, mut run: SpeechRun) {
-        if (run.samples.len() as u64) < ms_to_samples(MIN_SEGMENT_MS) {
+        if run.voiced_ms() < MIN_VOICED_MS {
+            return;
+        }
+        if self.is_echo(&run) {
+            log::debug!(
+                "Meeting {}: mic run {}–{} ms dropped as speaker echo",
+                self.ctx.shared.meeting_id,
+                run.t0_ms(),
+                run.t1_ms()
+            );
             return;
         }
         let ctx = &self.ctx;
@@ -526,7 +783,7 @@ impl SourceProcessor {
             t1_ms: t1,
             samples: run.samples,
         };
-        match ctx.jobs.try_send(job) {
+        match self.jobs.try_send(job) {
             Ok(()) => {}
             Err(TrySendError::Full(job)) | Err(TrySendError::Disconnected(job)) => {
                 let _ = ctx.store.delete_segment(job.segment_id);
@@ -551,29 +808,65 @@ fn emit_dropped(app: &AppHandle, segment: &MeetingSegment) {
 
 /// Spawn the capture + processing thread of one source. Returns once the
 /// stream is open (Ok) or failed to open (Err; the thread has exited).
-pub fn spawn_source(ctx: SourceContext) -> Result<JoinHandle<()>, String> {
+///
+/// The job sender is handed to the thread only after the device opened in
+/// time. If opening times out, the hand-over channel is dropped: the thread
+/// exits by itself as soon as `open_source` returns (closing the stream on
+/// its own thread), and — not holding a job sender — never keeps the
+/// transcription worker alive.
+pub fn spawn_source(
+    ctx: SourceContext,
+    jobs: SyncSender<SegmentJob>,
+) -> Result<JoinHandle<()>, String> {
     let (init_tx, init_rx) = mpsc::sync_channel::<Result<(), String>>(1);
+    let (go_tx, go_rx) = mpsc::sync_channel::<SyncSender<SegmentJob>>(1);
     let source = ctx.source;
     let handle = std::thread::Builder::new()
         .name(format!("meeting-{}", source.file_prefix()))
-        .spawn(move || run_source(ctx, init_tx))
+        .spawn(move || run_source(ctx, init_tx, go_rx))
         .map_err(|e| format!("Не удалось запустить поток записи: {e}"))?;
 
-    match init_rx.recv_timeout(Duration::from_secs(10)) {
-        Ok(Ok(())) => Ok(handle),
+    match init_rx.recv_timeout(SOURCE_OPEN_TIMEOUT) {
+        Ok(Ok(())) => {
+            if go_tx.send(jobs).is_err() {
+                let _ = handle.join();
+                return Err(format!(
+                    "Источник «{}» неожиданно остановился",
+                    source.default_label()
+                ));
+            }
+            Ok(handle)
+        }
         Ok(Err(message)) => {
+            drop(go_tx);
             let _ = handle.join();
             Err(message)
         }
-        Err(_) => Err(format!(
-            "Источник «{}» не ответил вовремя",
-            source.default_label()
-        )),
+        Err(_) => {
+            // Abort: the thread sees the closed channel after open_source.
+            drop(go_tx);
+            drop(init_rx);
+            log::warn!("Meeting: {source:?} did not open within {SOURCE_OPEN_TIMEOUT:?}; abandoning its thread");
+            Err(format!(
+                "Источник «{}» не ответил вовремя",
+                source.default_label()
+            ))
+        }
     }
 }
 
-fn run_source(ctx: SourceContext, init_tx: SyncSender<Result<(), String>>) {
-    let vad = match build_vad(&ctx.vad_model_path) {
+/// Name of the current default output device (loopback target), if any.
+fn current_default_output() -> Option<String> {
+    capture::default_output_device_name()
+}
+
+fn run_source(
+    ctx: SourceContext,
+    init_tx: SyncSender<Result<(), String>>,
+    go_rx: Receiver<SyncSender<SegmentJob>>,
+) {
+    let raw_voice = Arc::new(AtomicBool::new(false));
+    let vad = match build_vad(&ctx.vad_model_path, Arc::clone(&raw_voice)) {
         Ok(vad) => vad,
         Err(e) => {
             let _ = init_tx.send(Err(e));
@@ -588,7 +881,18 @@ fn run_source(ctx: SourceContext, init_tx: SyncSender<Result<(), String>>) {
                 return;
             }
         };
-    let _ = init_tx.send(Ok(()));
+    if init_tx.send(Ok(())).is_err() {
+        log::info!("Meeting {:?}: opened too late, closing", ctx.source);
+        return;
+    }
+    // Wait for the job sender; a closed channel means spawn_source gave up.
+    let jobs = match go_rx.recv() {
+        Ok(jobs) => jobs,
+        Err(_) => {
+            log::info!("Meeting {:?}: start aborted, closing", ctx.source);
+            return;
+        }
+    };
     log::info!(
         "Meeting {}: {:?} capture running on {:?} @ {} Hz",
         ctx.shared.meeting_id,
@@ -597,7 +901,7 @@ fn run_source(ctx: SourceContext, init_tx: SyncSender<Result<(), String>>) {
         stream.sample_rate
     );
 
-    let in_rate = stream.sample_rate.max(1) as usize;
+    let mut in_rate = stream.sample_rate.max(1) as usize;
     let mut resampler = FrameResampler::new(
         in_rate,
         SAMPLE_RATE as usize,
@@ -605,18 +909,25 @@ fn run_source(ctx: SourceContext, init_tx: SyncSender<Result<(), String>>) {
     );
     let mut processor = SourceProcessor {
         wav: WavChunker::new(ctx.audio_dir.clone(), ctx.source.file_prefix()),
-        segmenter: Segmenter::new(ms_to_samples(MAX_SEGMENT_MS) as usize),
+        segmenter: Segmenter::new(
+            ms_to_samples(SOFT_MAX_SEGMENT_MS) as usize,
+            ms_to_samples(HARD_MAX_SEGMENT_MS) as usize,
+        ),
         vad,
+        raw_voice,
         vad_failed: false,
         pos: 0,
         level: 0.0,
+        jobs,
         ctx,
     };
 
     let shared = Arc::clone(&processor.ctx.shared);
+    let source = processor.ctx.source;
     let mut was_paused = false;
     let mut last_data = Instant::now();
     let mut error_reported = false;
+    let mut last_device_check = Instant::now();
 
     loop {
         let stopping = shared.stop_capture.load(Ordering::Acquire);
@@ -628,7 +939,7 @@ fn run_source(ctx: SourceContext, init_tx: SyncSender<Result<(), String>>) {
                 processor.flush();
                 resampler.reset();
                 was_paused = true;
-                shared.set_level(processor.ctx.source, 0.0);
+                shared.set_level(source, 0.0);
             }
             std::thread::sleep(POLL_INTERVAL);
             continue;
@@ -637,6 +948,7 @@ fn run_source(ctx: SourceContext, init_tx: SyncSender<Result<(), String>>) {
             // The clock excluded the pause; continue from where it stands.
             was_paused = false;
             processor.pos = ms_to_samples(shared.elapsed_ms());
+            shared.clear_frame_levels(source);
             last_data = Instant::now();
         }
 
@@ -645,53 +957,100 @@ fn run_source(ctx: SourceContext, init_tx: SyncSender<Result<(), String>>) {
         stream.drain(|slice| batch.extend_from_slice(slice));
 
         if !batch.is_empty() {
+            let idle = last_data.elapsed();
             last_data = Instant::now();
             let batch_16k = batch.len() as u64 * SAMPLE_RATE / in_rate as u64;
             let clock_pos = ms_to_samples(shared.elapsed_ms());
-            if clock_pos > processor.pos + batch_16k + GAP_TOLERANCE_SAMPLES {
+            if let Some(new_pos) = gap_realign(processor.pos, batch_16k, clock_pos, idle) {
                 // The device delivered nothing for a while (loopback during
                 // silence): close the run and jump to the wall clock.
                 processor.flush();
-                processor.pos = clock_pos.saturating_sub(batch_16k);
+                processor.pos = new_pos;
             }
             resampler.push(&batch, |frame| processor.process_frame(frame));
         } else if processor.segmenter.has_open_run() && last_data.elapsed() >= IDLE_FLUSH {
             processor.flush();
-            shared.set_level(processor.ctx.source, 0.0);
+            shared.set_level(source, 0.0);
         }
 
-        if stream.has_failed() && !error_reported {
-            error_reported = true;
-            report_error(
-                &processor.ctx.app,
-                &shared,
-                format!(
-                    "Источник «{}» отключился",
-                    processor.ctx.source.default_label()
-                ),
-            );
+        // Device lost, or (loopback) the default output switched — e.g. a
+        // Bluetooth headset connected mid-call: reopen on the current device.
+        if !stopping && last_device_check.elapsed() >= DEVICE_CHECK_PERIOD {
+            last_device_check = Instant::now();
+            let failed = stream.has_failed();
+            let switched = source == MeetingSource::System
+                && current_default_output().is_some_and(|name| name != stream.device_name);
+            if failed || switched {
+                match capture::open_source(source, processor.ctx.selected_microphone.as_deref())
+                {
+                    Ok(new_stream) => {
+                        log::info!(
+                            "Meeting {:?}: switching capture {:?} -> {:?} ({})",
+                            source,
+                            stream.device_name,
+                            new_stream.device_name,
+                            if failed { "device lost" } else { "default changed" }
+                        );
+                        // Finish what the old device delivered, then close it
+                        // (on this thread, as cpal requires).
+                        let mut rest: Vec<f32> = Vec::new();
+                        stream.drain(|slice| rest.extend_from_slice(slice));
+                        resampler.push(&rest, |frame| processor.process_frame(frame));
+                        resampler.finish(|frame| processor.process_frame(frame));
+                        processor.flush();
+                        log_overruns(source, &stream);
+                        stream = new_stream;
+                        in_rate = stream.sample_rate.max(1) as usize;
+                        resampler = FrameResampler::new(
+                            in_rate,
+                            SAMPLE_RATE as usize,
+                            Duration::from_millis(FRAME_MS),
+                        );
+                        shared.set_level(source, 0.0);
+                        if error_reported {
+                            log::info!("Meeting {source:?}: capture restored");
+                        }
+                        error_reported = false;
+                        // `last_data` is left alone: the next batch measures the
+                        // switch as idle time and the gap logic realigns.
+                    }
+                    Err(e) => {
+                        if failed && !error_reported {
+                            error_reported = true;
+                            report_error(
+                                &processor.ctx.app,
+                                &shared,
+                                format!("Источник «{}» отключился: {e}", source.default_label()),
+                            );
+                        } else if !failed {
+                            log::warn!("Meeting {source:?}: new default device not usable: {e}");
+                        }
+                    }
+                }
+            }
         }
 
         if stopping {
             resampler.finish(|frame| processor.process_frame(frame));
             processor.flush();
             processor.wav.finish();
-            shared.set_level(processor.ctx.source, 0.0);
+            shared.set_level(source, 0.0);
             break;
         }
 
         std::thread::sleep(POLL_INTERVAL);
     }
 
+    log_overruns(source, &stream);
+    drop(stream);
+    log::info!("Meeting {source:?} capture thread finished");
+}
+
+fn log_overruns(source: MeetingSource, stream: &CaptureStream) {
     let overruns = stream.flags.overrun_samples.load(Ordering::Relaxed);
     if overruns > 0 {
-        log::warn!(
-            "Meeting {:?} capture dropped {overruns} samples (ring full)",
-            processor.ctx.source
-        );
+        log::warn!("Meeting {source:?} capture dropped {overruns} samples (ring full)");
     }
-    drop(stream);
-    log::info!("Meeting {:?} capture thread finished", processor.ctx.source);
 }
 
 /* ───────────────────────────── Transcription worker ───────────────────────────── */
@@ -720,18 +1079,20 @@ fn run_worker(
         if shared.discard.load(Ordering::Acquire) {
             continue;
         }
-        let text = match transcribe_job(&app, job.samples) {
-            Ok(text) => text,
+        let text = match transcribe_with_retry(&app, &shared, &job.samples) {
+            Ok(text) => text.trim().to_string(),
             Err(e) => {
+                // Never lose a segment because the engine was busy or failed:
+                // keep its place in the timeline with a marker.
                 report_error(&app, &shared, format!("Ошибка распознавания: {e}"));
-                String::new()
+                UNRECOGNIZED_TEXT.to_string()
             }
         };
         if shared.discard.load(Ordering::Acquire) {
             continue;
         }
-        let text = text.trim().to_string();
         if text.is_empty() {
+            // Recognition succeeded and heard nothing: drop the row.
             let _ = store.delete_segment(job.segment_id);
             let _ = app.emit(
                 "meeting-segment",
@@ -760,13 +1121,44 @@ fn run_worker(
     log::info!("Meeting {} transcription worker finished", shared.meeting_id);
 }
 
+/// Recognize `samples`, retrying up to [`TRANSCRIBE_RETRIES`] times with a
+/// pause (the engine may be busy with dictation or reloading).
+fn transcribe_with_retry(
+    app: &AppHandle,
+    shared: &SessionShared,
+    samples: &[f32],
+) -> Result<String, String> {
+    let mut last_error = String::new();
+    for attempt in 0..=TRANSCRIBE_RETRIES {
+        if attempt > 0 {
+            if shared.discard.load(Ordering::Acquire) || shared.exiting.load(Ordering::Acquire) {
+                break;
+            }
+            std::thread::sleep(TRANSCRIBE_RETRY_BACKOFF);
+        }
+        match transcribe_job(app, samples.to_vec()) {
+            Ok(text) => return Ok(text),
+            Err(e) => {
+                log::warn!(
+                    "Meeting {}: recognition attempt {} failed: {e}",
+                    shared.meeting_id,
+                    attempt + 1
+                );
+                last_error = e;
+            }
+        }
+    }
+    Err(last_error)
+}
+
 fn transcribe_job(app: &AppHandle, samples: Vec<f32>) -> Result<String, String> {
     let manager = app
         .try_state::<Arc<TranscriptionManager>>()
         .map(|state| Arc::clone(state.inner()))
         .ok_or_else(|| "модуль распознавания не готов".to_string())?;
     if !manager.is_model_loaded() {
-        // transcribe() waits for a load that is in progress.
+        // transcribe() waits for a load that is in progress, and for an
+        // engine another caller is using.
         manager.initiate_model_load();
     }
     manager.transcribe(samples).map_err(|e| e.to_string())
@@ -820,31 +1212,66 @@ pub fn job_channel() -> (SyncSender<SegmentJob>, Receiver<SegmentJob>) {
 mod tests {
     use super::*;
 
+    const LOUD: f32 = 0.5;
+
     #[test]
     fn segmenter_starts_run_at_prefill_and_closes_on_noise() {
-        let mut seg = Segmenter::new(100);
+        let mut seg = Segmenter::new(100, 100);
         // Onset emits 30 samples (prefill + current) ending at position 50.
-        assert!(seg.push_speech(50, &[0.1; 30]).is_none());
-        assert!(seg.push_speech(60, &[0.2; 10]).is_none());
+        assert!(seg.push_speech(50, &[0.1; 30], 10).is_none());
+        assert!(seg.push_speech(60, &[0.2; 10], 10).is_none());
         let run = seg.push_noise().expect("run closes on noise");
         assert_eq!(run.start, 20);
         assert_eq!(run.samples.len(), 40);
+        assert_eq!(run.voiced_samples, 20);
         assert!(seg.push_noise().is_none());
         assert!(!seg.has_open_run());
     }
 
     #[test]
-    fn segmenter_cuts_long_runs() {
-        let mut seg = Segmenter::new(25);
-        assert!(seg.push_speech(10, &[0.0; 10]).is_none());
-        assert!(seg.push_speech(20, &[0.0; 10]).is_none());
-        let run = seg.push_speech(30, &[0.0; 10]).expect("cut at max length");
+    fn segmenter_hard_cut_even_without_pause() {
+        let mut seg = Segmenter::new(15, 25);
+        assert!(seg.push_speech(10, &[LOUD; 10], 10).is_none());
+        // Past the soft limit, but the frame is voiced and loud: no cut.
+        assert!(seg.push_speech(20, &[LOUD; 10], 10).is_none());
+        let run = seg.push_speech(30, &[LOUD; 10], 10).expect("cut at hard max");
         assert_eq!(run.start, 0);
         assert_eq!(run.samples.len(), 30);
         // Speech continues: a new run starts at the next slice.
-        assert!(seg.push_speech(40, &[0.0; 10]).is_none());
+        assert!(seg.push_speech(40, &[LOUD; 10], 10).is_none());
         let next = seg.flush().unwrap();
         assert_eq!(next.start, 30);
+    }
+
+    #[test]
+    fn segmenter_soft_cut_at_first_unvoiced_frame() {
+        let mut seg = Segmenter::new(25, 100);
+        assert!(seg.push_speech(10, &[LOUD; 10], 10).is_none());
+        // Unvoiced frame before the soft limit: no cut.
+        assert!(seg.push_speech(20, &[LOUD; 10], 0).is_none());
+        // Past the soft limit and unvoiced (hangover frame): cut here.
+        let run = seg.push_speech(30, &[LOUD; 10], 0).expect("soft cut");
+        assert_eq!(run.samples.len(), 30);
+        assert_eq!(run.voiced_samples, 10);
+    }
+
+    #[test]
+    fn segmenter_soft_cut_at_quiet_voiced_frame() {
+        let mut seg = Segmenter::new(15, 100);
+        assert!(seg.push_speech(10, &[LOUD; 10], 10).is_none());
+        assert!(seg.push_speech(20, &[LOUD; 10], 10).is_none());
+        // Voiced but far below the run's mean RMS: counts as a pause.
+        let run = seg.push_speech(30, &[0.01; 10], 10).expect("quiet cut");
+        assert_eq!(run.samples.len(), 30);
+        // Energy resets with the new run.
+        assert!(seg.push_speech(40, &[0.01; 10], 10).is_none());
+    }
+
+    #[test]
+    fn production_limits_fit_the_model_window() {
+        assert!(SOFT_MAX_SEGMENT_MS < HARD_MAX_SEGMENT_MS);
+        assert!(HARD_MAX_SEGMENT_MS < 25_000);
+        assert_eq!(FRAME_SAMPLES, 480);
     }
 
     #[test]
@@ -852,9 +1279,82 @@ mod tests {
         let run = SpeechRun {
             start: 16_000,
             samples: vec![0.0; 8_000],
+            voiced_samples: 4_000,
         };
         assert_eq!(run.t0_ms(), 1_000);
         assert_eq!(run.t1_ms(), 1_500);
+        assert_eq!(run.voiced_ms(), 250);
+    }
+
+    #[test]
+    fn gap_is_applied_only_after_idle() {
+        let tol = GAP_TOLERANCE_SAMPLES;
+        // Continuous delivery with drift beyond tolerance: ignored.
+        assert_eq!(
+            gap_realign(0, 480, 480 + tol + 1_000, Duration::from_millis(20)),
+            None
+        );
+        // Real pause in delivery: jump to the clock.
+        assert_eq!(
+            gap_realign(0, 480, 480 + tol + 1_000, Duration::from_secs(2)),
+            Some(tol + 1_000)
+        );
+        // Pause but within tolerance: keep counting.
+        assert_eq!(gap_realign(0, 480, 480 + tol, Duration::from_secs(2)), None);
+    }
+
+    fn frames(levels: &[(u64, f32)]) -> Vec<(u64, f32)> {
+        levels.to_vec()
+    }
+
+    #[test]
+    fn echo_rule_drops_speaker_bleed() {
+        let mic: Vec<_> = (0..20).map(|i| (i, 0.45)).collect();
+        let sys: Vec<_> = (0..20).map(|i| (i, 0.7)).collect();
+        assert!(is_probable_echo(&mic, &sys));
+    }
+
+    #[test]
+    fn echo_rule_keeps_own_voice() {
+        // Own voice louder at the mic than the remote in the loopback.
+        let mic: Vec<_> = (0..20).map(|i| (i, 0.8)).collect();
+        let sys: Vec<_> = (0..20).map(|i| (i, 0.6)).collect();
+        assert!(!is_probable_echo(&mic, &sys));
+        // Remote silent / quiet: not echo.
+        let quiet_sys: Vec<_> = (0..20).map(|i| (i, 0.2)).collect();
+        let soft_mic: Vec<_> = (0..20).map(|i| (i, 0.1)).collect();
+        assert!(!is_probable_echo(&soft_mic, &quiet_sys));
+        // No loopback data at all (silence, or no system source).
+        assert!(!is_probable_echo(&soft_mic, &[]));
+    }
+
+    #[test]
+    fn echo_rule_is_conservative() {
+        // Only half the frames dominated by the system: keep.
+        let mic: Vec<_> = (0..20).map(|i| (i, 0.45)).collect();
+        let sys: Vec<_> = (0..20)
+            .map(|i| (i, if i % 2 == 0 { 0.7 } else { 0.3 }))
+            .collect();
+        assert!(!is_probable_echo(&mic, &sys));
+        // Too short to judge.
+        assert!(!is_probable_echo(
+            &frames(&[(0, 0.1), (1, 0.1)]),
+            &frames(&[(0, 0.9), (1, 0.9)])
+        ));
+        // System frames offset by one index still pair up.
+        let shifted: Vec<_> = (1..21).map(|i| (i, 0.7)).collect();
+        assert!(is_probable_echo(&mic, &shifted));
+    }
+
+    #[test]
+    fn level_history_is_bounded() {
+        let mut history = LevelHistory::default();
+        for i in 0..(LEVEL_HISTORY_FRAMES as u64 + 10) {
+            history.push(i, 0.5);
+        }
+        assert_eq!(history.frames.len(), LEVEL_HISTORY_FRAMES);
+        assert_eq!(history.between(0, 9).len(), 0);
+        assert_eq!(history.between(10, 19).len(), 10);
     }
 
     #[test]

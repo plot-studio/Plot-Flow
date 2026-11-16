@@ -12,7 +12,15 @@ import type {
 import i18n, { syncLanguageFromSettings } from "@/i18n";
 import { getLanguageDirection } from "@/lib/utils/rtl";
 
-type OverlayState = "recording" | "streaming" | "transcribing" | "processing";
+type OverlayState =
+  | "recording"
+  | "streaming"
+  | "transcribing"
+  | "processing"
+  | "saved";
+
+// How long the "saved — Ctrl+V" row replaces the waveform while recording.
+const SAVED_FLASH_MS = 3000;
 
 // Number of reactive bars in the waveform (the simple, smoothed style shared by
 // every overlay form). Mic levels arrive as 16 FFT buckets; we take the first N.
@@ -43,6 +51,10 @@ const RecordingOverlay: React.FC = () => {
   // True once live text overflows the cap. A top overlay fades its top edge only
   // while overflowing, so the resting first line stays crisp flush under the pill.
   const [overflowing, setOverflowing] = useState(false);
+  // Smart insert held a phrase (cursor not in a text field): briefly show
+  // "saved — Ctrl+V" in place of the waveform.
+  const [savedFlash, setSavedFlash] = useState(false);
+  const savedTimerRef = useRef<number | undefined>(undefined);
 
   const smoothedLevelsRef = useRef<number[]>(Array(16).fill(0));
   // Live-text scroll-back: the text region "sticks" to the newest line while the
@@ -92,7 +104,24 @@ const RecordingOverlay: React.FC = () => {
       const unlistenHide = await listen("hide-overlay", () => {
         setIsVisible(false);
         setCaptureReady(false);
+        setSavedFlash(false);
       });
+
+      const unlistenPending = await listen<{ chars: number }>(
+        "pending-text",
+        (event) => {
+          window.clearTimeout(savedTimerRef.current);
+          if (event.payload.chars > 0) {
+            setSavedFlash(true);
+            savedTimerRef.current = window.setTimeout(
+              () => setSavedFlash(false),
+              SAVED_FLASH_MS,
+            );
+          } else {
+            setSavedFlash(false);
+          }
+        },
+      );
 
       const unlistenReady = await listen("recording-ready", () => {
         setElapsed(0);
@@ -124,6 +153,7 @@ const RecordingOverlay: React.FC = () => {
       return () => {
         unlistenShow();
         unlistenHide();
+        unlistenPending();
         unlistenReady();
         unlistenLevel();
         unlistenStream();
@@ -227,6 +257,40 @@ const RecordingOverlay: React.FC = () => {
     </div>
   );
 
+  // check mark (left) | "saved — Ctrl+V" (center) — smart insert kept the text.
+  const savedRow = (label: string) => (
+    <div className="sbase">
+      <div className="sbase-l">
+        <svg className="ssaved-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="M3.5 8.5 L6.5 11.5 L12.5 4.5"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </div>
+      <span className="swork-label">{label}</span>
+      <div className="sbase-r" />
+    </div>
+  );
+
+  // ---- Smart-insert notice after a recording: one wide pill ----
+  if (state === "saved") {
+    return (
+      <div
+        dir={direction}
+        className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
+      >
+        <div className="scard compact csaved">
+          {savedRow(t("overlay.savedHint"))}
+        </div>
+      </div>
+    );
+  }
+
   // ---- Live overlay: a pill that sculpts open into a panel ----
   if (state === "streaming") {
     const hasText =
@@ -273,7 +337,9 @@ const RecordingOverlay: React.FC = () => {
                   : t("overlay.transcribing"),
                 true,
               )
-            : listeningRow(open, true)}
+            : savedFlash
+              ? savedRow(t("overlay.savedShort"))
+              : listeningRow(open, true)}
         </div>
       </div>
     );
@@ -294,9 +360,15 @@ const RecordingOverlay: React.FC = () => {
       className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
     >
       <div
-        className={`scard compact ${working && isVisible ? "cworking" : ""}`}
+        className={`scard compact ${
+          (working || savedFlash) && isVisible ? "cworking" : ""
+        }`}
       >
-        {working ? workingRow(workLabel, true) : listeningRow(false, true)}
+        {working
+          ? workingRow(workLabel, true)
+          : savedFlash
+            ? savedRow(t("overlay.savedShort"))
+            : listeningRow(false, true)}
       </div>
     </div>
   );

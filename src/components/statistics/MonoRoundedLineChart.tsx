@@ -109,11 +109,11 @@ export function MonoRoundedLineChart({
       initial={reduce ? false : { opacity: 0, scale: 0.98, y: 6 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ duration: reduce ? 0 : 0.32, ease: [0.16, 1, 0.3, 1] }}
-      className={`relative w-full rounded-3xl transition-all duration-300 group flex flex-col justify-between overflow-hidden p-3.5 sm:p-4 ${
+      className={`relative w-full rounded-[14px] transition-all duration-300 group flex flex-col justify-between overflow-hidden p-3.5 sm:p-4 ${
         compact ? "aspect-[16/10] min-h-[220px] w-full" : "min-h-[290px]"
       } ${
         isDark
-          ? "bg-[#141414] border border-white/[0.08] shadow-[0_4px_20px_rgba(0,0,0,0.3)] hover:border-white/20"
+          ? "bg-surface border border-text/[0.065] text-text shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] hover:border-text/15"
           : "bg-white shadow-[0_4px_20px_rgba(0,0,0,0.04)] border border-neutral-200 text-black hover:border-neutral-300"
       }`}
     >
@@ -144,7 +144,7 @@ export function MonoRoundedLineChart({
             aria-label={t("statistics.chooseDate")}
             aria-expanded={settings === "date"}
             onClick={() => setSettings(settings === "date" ? null : "date")}
-            className="inline-flex items-center text-[9px] font-mono text-neutral-400 border-0 bg-transparent p-0"
+            className="inline-flex items-center text-[9px] font-mono text-text-muted border-0 bg-transparent p-0"
           >
             {period === "day" ? month.slice(5) + "/" + month.slice(2, 4) : year}
           </button>
@@ -156,7 +156,7 @@ export function MonoRoundedLineChart({
           aria-label={t("statistics.period")}
           className={`inline-flex items-center p-0.5 rounded-lg border text-[10px] font-mono font-medium ${
             isDark
-              ? "bg-white/5 border-white/10"
+              ? "bg-text/[0.05] border-text/[0.08]"
               : "bg-neutral-100 border-neutral-200"
           }`}
         >
@@ -174,10 +174,10 @@ export function MonoRoundedLineChart({
               className={`px-2 py-0.5 rounded-md transition-colors cursor-pointer border-0 ${
                 period === tf
                   ? isDark
-                    ? "bg-white text-black font-semibold"
+                    ? "bg-text/[0.12] text-text font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
                     : "bg-black text-white font-semibold"
                   : isDark
-                    ? "text-neutral-400 hover:text-white bg-transparent"
+                    ? "text-text-muted hover:text-text bg-transparent"
                     : "text-neutral-600 hover:text-black bg-transparent"
               }`}
             >
@@ -195,8 +195,8 @@ export function MonoRoundedLineChart({
             ? "statistics.wordsTrend"
             : "statistics.audioTrend",
         )}
-        className={`relative w-full flex-1 rounded-[14px] overflow-hidden p-2 transition-colors min-h-0 duration-300 touch-pan-y ${
-          isDark ? "bg-[#131313]" : "bg-[#f4f4f6]"
+        className={`relative w-full flex-1 rounded-[10px] overflow-hidden p-2 transition-colors min-h-0 duration-300 touch-pan-y ${
+          isDark ? "bg-background" : "bg-[#f4f4f6]"
         }`}
       >
         <ResponsiveContainer width="100%" height="100%">
@@ -238,7 +238,7 @@ export function MonoRoundedLineChart({
               name={t(`statistics.metrics.${metric}`)}
               stroke={
                 currentData.filter((point) => point.value !== null).length > 1
-                  ? "#FFFFFF"
+                  ? "#c6a27c"
                   : "none"
               }
               strokeWidth={3}
@@ -246,14 +246,14 @@ export function MonoRoundedLineChart({
               strokeLinejoin="round"
               dot={{
                 r: 3.5,
-                fill: "#FFFFFF",
-                stroke: isDark ? "#181818" : "#FFFFFF",
+                fill: "#c6a27c",
+                stroke: "var(--color-surface)",
                 strokeWidth: 2,
               }}
               activeDot={{
                 r: 5.5,
-                fill: "#FFFFFF",
-                stroke: isDark ? "#A1A1AA" : "#52525B",
+                fill: "#dcc2a2",
+                stroke: isDark ? "#9b7853" : "#52525B",
                 strokeWidth: 2,
               }}
               isAnimationActive={!reduce}
@@ -271,7 +271,7 @@ export function MonoRoundedLineChart({
               ? "statistics.metric"
               : "statistics.chooseDate",
           )}
-          className="absolute top-12 inset-x-3 z-30 px-3 py-2 rounded-xl text-xs shadow-2xl backdrop-blur-md border font-sans bg-[#181818]/90 border-white/10 text-white"
+          className="absolute top-12 inset-x-3 z-30 px-3 py-2 rounded-xl text-xs shadow-2xl backdrop-blur-md border font-sans bg-surface-2/90 border-text/10 text-text"
         >
           {settings === "metric" ? (
             <select
@@ -283,7 +283,7 @@ export function MonoRoundedLineChart({
                 setSettings(null);
                 metricTrigger.current?.focus();
               }}
-              className="w-full bg-[#181818]"
+              className="w-full bg-surface-2"
             >
               {(["words", "audio"] as const).map((value) => (
                 <option key={value} value={value}>
@@ -306,7 +306,7 @@ export function MonoRoundedLineChart({
                   dateTrigger.current?.focus();
                 }
               }}
-              className="w-full bg-[#181818]"
+              className="w-full bg-surface-2"
             />
           ) : (
             <select
@@ -318,7 +318,7 @@ export function MonoRoundedLineChart({
                 setSettings(null);
                 dateTrigger.current?.focus();
               }}
-              className="w-full bg-[#181818]"
+              className="w-full bg-surface-2"
             >
               {years.map((value) => (
                 <option key={value} value={value}>

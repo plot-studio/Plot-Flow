@@ -8,6 +8,7 @@ mod catalog;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod focus;
 mod helpers;
 mod input;
 mod llm_client;
@@ -22,6 +23,7 @@ mod secure_input;
 mod settings;
 mod shortcut;
 mod signal_handle;
+mod smart_insert;
 mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
@@ -232,6 +234,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         }
         Err(err) => log::error!("Failed to initialize meeting mode: {}", err),
     }
+    // A llama-server orphaned by a crash would keep holding VRAM.
+    llm_local::kill_stale_at_startup(app_handle);
     app_handle.manage(tray::TrayState::new());
 
     // The sole bundled model is verified by ModelManager before selection.
@@ -719,6 +723,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_filler_word_removal_enabled_setting,
             shortcut::change_auto_mic_gain_setting,
             shortcut::change_live_insert_setting,
+            shortcut::change_smart_insert_setting,
             shortcut::change_app_language_setting,
             shortcut::change_update_checks_setting,
             shortcut::change_show_whats_new_on_update_setting,
@@ -987,11 +992,15 @@ pub fn run(cli_args: CliArgs) {
                     // Fixed size: every page is laid out for exactly this
                     // window (statistics cards were verified at ~500px of
                     // content next to the 160px sidebar).
-                    .inner_size(760.0, 640.0)
-                    .min_inner_size(760.0, 640.0)
-                    .max_inner_size(760.0, 640.0)
+                    .inner_size(960.0, 600.0)
+                    .min_inner_size(960.0, 600.0)
+                    .max_inner_size(960.0, 600.0)
                     .resizable(false)
                     .maximizable(false)
+                    // Frameless: the app draws its own title bar
+                    // (src/components/shell/TitleBar.tsx).
+                    .decorations(false)
+                    .shadow(true)
                     .visible(false);
 
             if let Some(data_dir) = portable::data_dir() {
@@ -1158,6 +1167,11 @@ pub fn run(cli_args: CliArgs) {
                 if let Err(err) = statistics.flush() {
                     log::error!("Failed to flush usage statistics at exit: {}", err);
                 }
+            }
+            // A meeting still recording: flush what we can (best effort) and
+            // mark it interrupted before the model goes away.
+            if let Some(meetings) = app.try_state::<Arc<meeting::MeetingManager>>() {
+                meetings.shutdown_for_exit(std::time::Duration::from_secs(5));
             }
             if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                 let _ = tm.unload_model();

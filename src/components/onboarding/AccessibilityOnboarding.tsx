@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { commands } from "@/bindings";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { Keyboard, Mic, Check, Loader2 } from "lucide-react";
+import { PlotFlowMark } from "../shell/PlotFlowMark";
 
 interface AccessibilityOnboardingProps {
   onComplete: () => void;
@@ -299,7 +300,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   // Still checking platform/initial permissions
   if (isChecking) {
     return (
-      <div className="h-screen w-full flex items-center justify-center">
+      <div className="h-full overflow-y-auto w-full flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-text/50" />
       </div>
     );
@@ -308,7 +309,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   // All permissions granted - show success briefly
   if (allGranted) {
     return (
-      <div className="h-screen w-full flex flex-col items-center justify-center gap-4">
+      <div className="h-full overflow-y-auto w-full flex flex-col items-center justify-center gap-4">
         <div className="p-4 rounded-full bg-emerald-500/20">
           <Check className="w-12 h-12 text-emerald-400" />
         </div>
@@ -321,13 +322,12 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
 
   // Show permissions request screen
   return (
-    <div className="h-screen w-full flex flex-col p-6 gap-6 items-center justify-center">
+    <div className="h-full overflow-y-auto w-full flex flex-col p-6 gap-6 items-center justify-center">
       <div className="flex flex-col items-center gap-2">
-        <img
-          src="/plot-flow-logo-transparent.png"
-          alt="Plot Flow"
-          width={200}
-        />
+        <PlotFlowMark size={44} />
+        <span className="text-2xl font-semibold tracking-[-0.03em] text-text">
+          {t("shell.appName")}
+        </span>
       </div>
 
       <div className="max-w-md w-full flex flex-col items-center gap-4">
@@ -342,7 +342,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
 
         {/* Microphone Permission Card */}
         {showMicrophonePermission && (
-          <div className="w-full p-4 rounded-lg bg-white/5 border border-mid-gray/20">
+          <div className="pf-card w-full p-4">
             <div className="flex items-center gap-4">
               <div className="p-3 rounded-full bg-logo-primary/20 shrink-0">
                 <Mic className="w-6 h-6 text-logo-primary" />
@@ -367,7 +367,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                 ) : (
                   <button
                     onClick={handleGrantMicrophone}
-                    className="px-4 py-2 rounded-lg bg-logo-primary hover:bg-logo-primary/90 text-white text-sm font-medium transition-colors"
+                    className="pf-copper h-9 px-4 rounded-full text-sm font-medium cursor-pointer transition-transform duration-150 hover:-translate-y-px active:scale-[0.97]"
                   >
                     {isWindows
                       ? t("accessibility.openSettings")
@@ -381,7 +381,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
 
         {/* Accessibility Permission Card */}
         {showAccessibilityPermission && (
-          <div className="w-full p-4 rounded-lg bg-white/5 border border-mid-gray/20">
+          <div className="pf-card w-full p-4">
             <div className="flex items-center gap-4">
               <div className="p-3 rounded-full bg-logo-primary/20 shrink-0">
                 <Keyboard className="w-6 h-6 text-logo-primary" />
@@ -406,7 +406,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                 ) : (
                   <button
                     onClick={handleGrantAccessibility}
-                    className="px-4 py-2 rounded-lg bg-logo-primary hover:bg-logo-primary/90 text-white text-sm font-medium transition-colors"
+                    className="pf-copper h-9 px-4 rounded-full text-sm font-medium cursor-pointer transition-transform duration-150 hover:-translate-y-px active:scale-[0.97]"
                   >
                     {t("onboarding.permissions.grant")}
                   </button>

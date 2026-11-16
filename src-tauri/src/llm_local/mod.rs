@@ -138,6 +138,17 @@ pub fn shutdown() {
     server::stop();
 }
 
+/// Kills a `llama-server` left running by a previous run that crashed (it
+/// would keep holding VRAM). Call once at app startup; cheap when there is
+/// no stale pid file.
+pub fn kill_stale_at_startup(app: &AppHandle) {
+    if let Ok(p) = paths(app) {
+        if p.pid_path.exists() {
+            std::thread::spawn(move || server::kill_stale(&p));
+        }
+    }
+}
+
 /// Summarizes a meeting transcript ("Я: … / Собеседник: …") into short
 /// Russian markdown. Starts the local server on demand; long transcripts are
 /// summarized in parts and then merged.

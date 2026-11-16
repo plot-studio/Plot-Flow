@@ -185,6 +185,7 @@ const settingUpdaters: {
   auto_mic_gain: (value) =>
     commands.changeAutoMicGainSetting(value as boolean),
   live_insert: (value) => commands.changeLiveInsertSetting(value as boolean),
+  smart_insert: (value) => commands.changeSmartInsertSetting(value as boolean),
   show_tray_icon: (value) =>
     commands.changeShowTrayIconSetting(value as boolean),
   transcribe_accelerator: (value) =>

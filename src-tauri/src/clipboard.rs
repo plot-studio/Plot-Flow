@@ -41,6 +41,12 @@ fn write_text_to_clipboard(app_handle: &AppHandle, text: &str) -> Result<(), Str
         .map_err(|e| format!("Failed to write to clipboard: {}", e))
 }
 
+/// Put text on the clipboard without pasting it (smart insert keeps held
+/// dictation there so Ctrl+V inserts it wherever the user wants).
+pub(crate) fn copy_text_to_clipboard(app_handle: &AppHandle, text: &str) -> Result<(), String> {
+    write_text_to_clipboard(app_handle, text)
+}
+
 fn finish_clipboard_paste(
     paste_result: Result<(), String>,
     paste_delay_after_ms: u64,

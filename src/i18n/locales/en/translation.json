@@ -9,8 +9,15 @@
     "heatmapWindow": "Activity window",
     "recordLabel": "recordings",
     "chooseDate": "Choose date",
-    "periodShort": { "day": "D", "month": "M", "year": "Y" },
-    "metricShort": { "words": "W", "audio": "A" },
+    "periodShort": {
+      "day": "D",
+      "month": "M",
+      "year": "Y"
+    },
+    "metricShort": {
+      "words": "W",
+      "audio": "A"
+    },
     "heatmapHint": "Hover a day",
     "untracked": "No data before tracking",
     "future": "No data for this future day",
@@ -40,7 +47,8 @@
     "audioTrend": "Recording time trend",
     "trackingSince": "Counting started on {{date}}.",
     "localNote": "Statistics are stored locally, independently of history. Earlier recordings are not imported.",
-    "audioNote": "Recording time, including pauses. Not recognition time."
+    "audioNote": "Recording time, including pauses. Not recognition time.",
+    "subtitle": "How much you have dictated, by day and month."
   },
   "plotFlow": {
     "modelLabel": "Model",
@@ -73,7 +81,8 @@
     "history": "History",
     "debug": "Debug",
     "about": "About",
-    "meeting": "Meeting"
+    "meeting": "Meeting",
+    "home": "Home"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -218,8 +227,12 @@
     "general": {
       "title": "General",
       "liveInsert": {
-        "title": "Insert Text While Speaking",
-        "description": "Each phrase is recognized and pasted as soon as you pause — no waiting for the recording to end. Turn off to paste everything at once after stopping."
+        "title": "Insert text as you speak",
+        "description": "Each phrase appears right after you pause, without waiting for the end."
+      },
+      "smartInsert": {
+        "title": "Smart insert",
+        "description": "Insert only into a text field; if the cursor is not in a field, the text is saved and you can paste it with Ctrl+V."
       },
       "shortcut": {
         "title": "Plot Flow Shortcuts",
@@ -230,12 +243,12 @@
         "pressKeys": "Press keys...",
         "bindings": {
           "transcribe": {
-            "name": "Transcribe Shortcut",
-            "description": "The keyboard shortcut to record and transcribe your voice."
+            "name": "Hotkey",
+            "description": "Press it in any app to start dictating."
           },
           "cancel": {
-            "name": "Cancel Shortcut",
-            "description": "The keyboard shortcut to cancel the current recording."
+            "name": "Cancel key",
+            "description": "Stop recording and paste nothing."
           },
           "transcribe_with_post_process": {
             "name": "Post-Processing Hotkey",
@@ -256,8 +269,8 @@
         "auto": "Auto"
       },
       "shortcutActivation": {
-        "title": "Shortcut Behavior",
-        "description": "Choose how the transcribe shortcut starts and stops recording.",
+        "title": "How the key works",
+        "description": "Hold it while you speak, or press once to start and again to stop.",
         "options": {
           "holdOrToggle": "Auto",
           "pushToTalk": "Hold",
@@ -294,7 +307,7 @@
       "title": "Sound",
       "microphone": {
         "title": "Microphone",
-        "description": "Select your preferred microphone device",
+        "description": "Which microphone to listen to while dictating.",
         "placeholder": "Select microphone...",
         "loading": "Loading..."
       },
@@ -305,18 +318,18 @@
         "channel": "Channel {{n}}"
       },
       "audioFeedback": {
-        "label": "Audio Feedback",
-        "description": "Play sound when recording starts and stops"
+        "label": "Start and stop sound",
+        "description": "A short beep so you know recording has started."
       },
       "outputDevice": {
-        "title": "Output Device",
-        "description": "Select your preferred audio output device for feedback sounds",
+        "title": "Play sounds on",
+        "description": "The speakers or headphones that play the beep.",
         "placeholder": "Select output device...",
         "loading": "Loading..."
       },
       "volume": {
-        "title": "Volume",
-        "description": "Adjust the volume of audio feedback sounds"
+        "title": "Beep volume",
+        "description": "How loud the beep is."
       }
     },
     "advanced": {
@@ -349,30 +362,30 @@
         }
       },
       "startHidden": {
-        "label": "Start Hidden",
-        "description": "Launch to system tray without opening the window."
+        "label": "Start minimized",
+        "description": "The window stays closed at startup; Plot Flow waits in the tray."
       },
       "autostart": {
-        "label": "Launch on Startup",
-        "description": "Automatically start Plot Flow when you log in to your computer."
+        "label": "Start with Windows",
+        "description": "Plot Flow is ready to dictate as soon as your computer starts."
       },
       "showTrayIcon": {
-        "label": "Show Tray Icon",
-        "description": "Display the Plot Flow icon in the system tray."
+        "label": "Tray icon",
+        "description": "An icon near the clock to open the window or quit."
       },
       "overlay": {
         "style": {
-          "title": "Overlay",
-          "description": "Choose the recording overlay: None hides it, Minimal shows a compact pill, Live shows transcription in real time as you speak (streaming-capable models only — look for the Streaming badge in the model picker). On Linux 'None' is recommended.",
+          "title": "On-screen recording indicator",
+          "description": "A small pill at the bottom of the screen while recording. “Detailed” shows the text as you speak.",
           "options": {
-            "none": "None",
-            "minimal": "Minimal",
-            "live": "Live"
+            "none": "Hidden",
+            "minimal": "Compact",
+            "live": "Detailed"
           }
         },
         "position": {
-          "title": "Overlay Position",
-          "description": "Where the overlay appears on screen during recording and transcription.",
+          "title": "Indicator position",
+          "description": "Bottom or top of the screen.",
           "options": {
             "bottom": "Bottom",
             "top": "Top"
@@ -408,10 +421,10 @@
         }
       },
       "autoSubmit": {
-        "title": "Auto Submit",
-        "description": "Automatically send the selected key combination after text insertion. Cmd+Enter applies on macOS, while Windows/Linux use Super+Enter.",
+        "title": "Press Enter after pasting",
+        "description": "Handy in chats: the message is sent on its own.",
         "options": {
-          "off": "Off",
+          "off": "Don't press",
           "enter": "Enter",
           "cmdEnter": "Cmd+Enter",
           "superEnter": "Super+Enter",
@@ -437,16 +450,16 @@
         }
       },
       "customWords": {
-        "title": "Custom Words",
-        "description": "Help supported models recognize names and specialized terms. Fuzzy correction is currently limited to words using A–Z and numbers.",
+        "title": "Your dictionary",
+        "description": "Add names and rare words so they are spelled correctly.",
         "placeholder": "Add a word",
         "add": "Add",
         "remove": "Remove {{word}}",
         "duplicate": "\"{{word}}\" already exists"
       },
       "voiceActivityDetection": {
-        "title": "Voice Activity Detection",
-        "description": "Filter silence from recordings. Streaming-capable models use a longer VAD tail; disabling VAD records raw audio."
+        "title": "Skip silence",
+        "description": "Pauses are cut from the recording, so recognition is faster."
       },
       "vadBackend": {
         "title": "Voice Activity Backend",
@@ -457,12 +470,12 @@
         }
       },
       "fillerWordRemoval": {
-        "title": "Remove Filler Words",
-        "description": "Removes common hesitation words from transcriptions. Turn off to keep them."
+        "title": "Remove “uh” and “um”",
+        "description": "Hesitations stay out of the text, so it reads cleaner."
       },
       "autoMicGain": {
-        "title": "Boost Microphone While Recording",
-        "description": "Sets the microphone level to maximum for the duration of a recording and restores it afterwards. Very quiet recordings are also amplified before recognition."
+        "title": "Boost the microphone while recording",
+        "description": "Quiet voices are recognised better; the level is raised only while recording."
       }
     },
     "postProcessing": {
@@ -521,9 +534,9 @@
     },
     "history": {
       "title": "History",
-      "openFolder": "Open Recordings Folder",
+      "openFolder": "Recordings folder",
       "loading": "Loading history...",
-      "empty": "No transcriptions yet. Start recording to build your history!",
+      "empty": "Your dictations will appear here. Press the hotkey and say something.",
       "copyToClipboard": "Copy transcription to clipboard",
       "save": "Save transcription",
       "unsave": "Remove from saved",
@@ -575,21 +588,21 @@
         "exitButton": "Exit Preview"
       },
       "soundTheme": {
-        "label": "Sound Theme",
-        "description": "Choose a sound theme for recording start and stop feedback"
+        "label": "Which sound",
+        "description": "Pick a sound and press ▶ to listen."
       },
       "wordCorrectionThreshold": {
         "title": "Word Correction Threshold",
         "description": "Sensitivity for custom word corrections"
       },
       "historyLimit": {
-        "title": "History Limit",
-        "description": "Maximum number of history entries to keep",
+        "title": "How many dictations to keep",
+        "description": "Older entries are removed once there are more.",
         "entries": "entries"
       },
       "recordingRetention": {
-        "title": "Auto-Delete Recordings",
-        "description": "Automatically delete old recordings to save space",
+        "title": "Delete old recordings",
+        "description": "Frees up disk space.",
         "never": "Never",
         "preserveLimit": "Keep latest {{count}}",
         "days3": "After 3 days",
@@ -598,8 +611,8 @@
         "placeholder": "Select retention period..."
       },
       "alwaysOnMicrophone": {
-        "label": "Always-On Microphone",
-        "description": "Keep microphone active for faster response"
+        "label": "Keep the microphone on",
+        "description": "Recording starts instantly, but the microphone is always in use."
       },
       "clamshellMicrophone": {
         "title": "Clamshell Microphone",
@@ -610,12 +623,12 @@
         "description": "Enable AI-powered text refinement after transcription"
       },
       "muteWhileRecording": {
-        "label": "Mute While Recording",
-        "description": "Mute system audio during recording"
+        "label": "Mute the computer while recording",
+        "description": "Music and videos won't leak into the microphone while you speak."
       },
       "appendTrailingSpace": {
-        "label": "Append Trailing Space",
-        "description": "Add a space after pasted transcription"
+        "label": "Space after the text",
+        "description": "You can dictate the next phrase straight away without adding a space."
       },
       "keyboardImplementation": {
         "title": "Keyboard Implementation",
@@ -700,6 +713,21 @@
           "details": "Handy's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
       }
+    },
+    "page": {
+      "title": "Settings",
+      "subtitle": "The essentials first. Everything else is below.",
+      "basic": "Basics",
+      "more": "More settings",
+      "moreHint": "Sounds, pasting, dictionary, history",
+      "groups": {
+        "recording": "Recording",
+        "sounds": "Sounds and indicator",
+        "paste": "Pasting",
+        "app": "App",
+        "history": "History"
+      },
+      "model": "Recognition: GigaAM v3 — built in, works offline"
     }
   },
   "footer": {
@@ -756,8 +784,8 @@
     "description": "Change the language of the Plot Flow interface"
   },
   "theme": {
-    "title": "Application Theme",
-    "description": "Choose whether Plot Flow follows your system theme or stays light or dark",
+    "title": "Appearance",
+    "description": "Dark or light window.",
     "options": {
       "system": "System",
       "light": "Light",
@@ -766,7 +794,9 @@
   },
   "overlay": {
     "transcribing": "Transcribing...",
-    "processing": "Processing..."
+    "processing": "Processing...",
+    "savedHint": "Text saved — press Ctrl+V to paste",
+    "savedShort": "Saved · Ctrl+V"
   },
   "secureInput": {
     "blockedWithCulprit_one": "{{name}} may be blocking 1 shortcut",
@@ -793,6 +823,7 @@
       "title": "Summary",
       "running": "The local model is preparing the summary…",
       "regenerate": "Regenerate",
+      "afterStop": "Available after the meeting is stopped",
       "needModel": "A local model is required (~2.5 GB, downloaded once)",
       "needModelHint": "Everything stays on this computer; nothing is sent to the internet.",
       "install": "Download model",
@@ -841,7 +872,7 @@
     },
     "list": {
       "title": "Past meetings",
-      "empty": "No meetings yet. Press the button above to record the first one.",
+      "empty": "No meetings yet.",
       "loading": "Loading meetings…",
       "retry": "Retry",
       "segments_one": "{{count}} fragment",
@@ -921,5 +952,21 @@
       "delete": "Could not delete",
       "export": "Could not export"
     }
+  },
+  "shell": {
+    "appName": "Plot Flow",
+    "minimize": "Minimize",
+    "close": "Close (Plot Flow keeps running in the tray)",
+    "navigation": "Sections",
+    "version": "v{{version}}"
+  },
+  "home": {
+    "title": "Dictations",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "empty": "Nothing here yet.",
+    "hotkeyTitle": "Dictation hotkey",
+    "micTitle": "Microphone",
+    "micDefault": "Default"
   }
 }

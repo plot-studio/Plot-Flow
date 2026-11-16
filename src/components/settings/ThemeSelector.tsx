@@ -16,12 +16,17 @@ export const ThemeSelector: React.FC<ThemeSelectorProps> = React.memo(
     const { t } = useTranslation();
     const { settings, updateSetting } = useSettings();
 
-    const currentTheme: Theme = settings?.theme ?? "system";
+    // Dark is the default palette, so "system" (the stored default) renders —
+    // and is shown — as dark. Only dark and light are offered.
+    const stored: Theme = settings?.theme ?? "system";
+    const currentTheme: Theme = stored === "light" ? "light" : "dark";
 
-    const themeOptions = THEME_OPTIONS.map((value) => ({
+    const themeOptions = THEME_OPTIONS.filter((v) => v !== "system").map(
+      (value) => ({
       value,
-      label: t(`theme.options.${value}`),
-    }));
+        label: t(`theme.options.${value}`),
+      }),
+    );
 
     const handleThemeChange = (value: string) => {
       const theme = value as Theme;

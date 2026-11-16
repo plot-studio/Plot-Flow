@@ -13,9 +13,9 @@ use super::types::{
 use super::MeetingManager;
 
 /// Main window width with the transcript panel closed / open (logical px).
-const WINDOW_WIDTH_CLOSED: f64 = 760.0;
-const WINDOW_WIDTH_OPEN: f64 = 1220.0;
-const WINDOW_HEIGHT: f64 = 640.0;
+const WINDOW_WIDTH_CLOSED: f64 = 960.0;
+const WINDOW_WIDTH_OPEN: f64 = 1380.0;
+const WINDOW_HEIGHT: f64 = 600.0;
 
 fn manager(app: &AppHandle) -> Result<Arc<MeetingManager>, String> {
     app.try_state::<Arc<MeetingManager>>()

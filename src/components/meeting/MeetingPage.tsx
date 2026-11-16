@@ -9,9 +9,11 @@ import {
   PanelRightOpen,
   Pause,
   Play,
-  Square,
   Trash2,
+  type LucideIcon,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { PRESS_SCALE, SPRING, SPRING_SNAPPY } from "@/lib/motion";
 import { commands, type MeetingInfo, type MeetingSources } from "@/bindings";
 import { Dialog } from "@/components/ui/Dialog";
 import { Button } from "@/components/ui/Button";
@@ -46,7 +48,10 @@ export const MeetingPage: React.FC = () => {
   }, [refreshList]);
 
   return (
-    <div className="flex w-full max-w-2xl flex-col gap-5">
+    <div className="flex w-full max-w-[680px] flex-col gap-6">
+      <header className="px-1">
+        <h1 className="pf-title">{t("meeting.title")}</h1>
+      </header>
       {status == null ? (
         <div className="flex items-center justify-center gap-2 py-16 text-sm text-text-muted">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -108,60 +113,71 @@ const IdleRecorder: React.FC = () => {
 
   const chip = (
     key: keyof MeetingSources,
-    Icon: React.ComponentType<{ className?: string }>,
+    Icon: LucideIcon,
     label: string,
   ) => {
     const on = sources[key];
     return (
-      <button
+      <motion.button
         type="button"
         role="switch"
         aria-checked={on}
+        aria-label={label}
+        title={label}
         onClick={() => toggle(key)}
-        className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors ${
+        whileTap={{ scale: 0.92 }}
+        transition={SPRING_SNAPPY}
+        className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded-full transition-colors duration-150 ${
           on
-            ? "border-logo-primary/70 bg-logo-primary/15 text-text"
-            : "border-line bg-transparent text-text-muted hover:border-mid-gray/50"
+            ? "bg-text/[0.1] text-text"
+            : "text-text-muted/60 hover:bg-text/[0.05] hover:text-text-muted"
         }`}
       >
-        <Icon className={`h-4 w-4 ${on ? "text-logo-primary" : ""}`} />
-        {label}
-      </button>
+        <Icon className="h-4 w-4" strokeWidth={on ? 2 : 1.7} />
+      </motion.button>
     );
   };
 
   return (
-    <section className="flex flex-col items-center gap-4 rounded-xl border border-line bg-surface px-6 pt-6 pb-5 text-center">
-      <div>
-        <h1 className="text-lg font-semibold">{t("meeting.title")}</h1>
-        <p className="mt-0.5 text-sm text-text-muted">
-          {t("meeting.subtitle")}
-        </p>
-      </div>
-      <button
+    <section className="pf-card flex flex-col items-center gap-5 px-6 pt-9 pb-6">
+      <motion.button
         type="button"
         onClick={() => void start()}
         disabled={none || starting}
         aria-label={t("meeting.start")}
         title={t("meeting.start")}
-        className="group relative flex h-24 w-24 cursor-pointer items-center justify-center rounded-full bg-logo-primary text-on-accent shadow-[0_0_0_6px_rgba(150,163,108,0.15)] transition-transform hover:scale-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
+        initial="rest"
+        whileHover={none || starting ? undefined : "hover"}
+        whileTap={none || starting ? undefined : "press"}
+        variants={{
+          rest: { scale: 1 },
+          hover: { scale: 1 },
+          press: { scale: PRESS_SCALE },
+        }}
+        transition={SPRING_SNAPPY}
+        className="relative flex h-[72px] w-[72px] cursor-pointer items-center justify-center rounded-full border-[3px] border-text/[0.16] disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {starting ? (
-          <Loader2 className="h-9 w-9 animate-spin" />
-        ) : (
-          <Mic className="h-10 w-10" strokeWidth={2.2} />
-        )}
-      </button>
-      <span className="-mt-1 text-xs font-medium text-text-muted">
-        {t("meeting.start")}
-      </span>
-      <div className="flex flex-wrap justify-center gap-2">
+        <motion.span
+          variants={{
+            rest: { scale: 1 },
+            hover: { scale: 1.06 },
+            press: { scale: 0.9 },
+          }}
+          transition={SPRING_SNAPPY}
+          className="pf-accent flex h-[54px] w-[54px] items-center justify-center rounded-full"
+        >
+          {starting && <Loader2 className="h-5 w-5 animate-spin" />}
+        </motion.span>
+      </motion.button>
+      <div className="flex items-center gap-1">
         {chip("microphone", Mic, t("meeting.sources.microphone"))}
         {chip("system_audio", MonitorSpeaker, t("meeting.sources.system"))}
       </div>
-      <p className={`text-xs ${none ? "text-warning" : "text-text-muted"}`}>
-        {none ? t("meeting.sources.none") : t("meeting.sources.hint")}
-      </p>
+      {none && (
+        <p className="-mt-2 text-[12px] text-warning">
+          {t("meeting.sources.none")}
+        </p>
+      )}
     </section>
   );
 };
@@ -173,13 +189,13 @@ const Meter: React.FC<{ label: string; level: number }> = ({
   // Levels arrive as 0..1 RMS; sqrt makes quiet speech visible.
   const pct = Math.round(Math.sqrt(Math.min(1, Math.max(0, level || 0))) * 100);
   return (
-    <div className="flex items-center gap-2 text-xs">
+    <div className="flex items-center gap-3 text-[12px]">
       <span className="w-20 shrink-0 truncate text-end text-text-muted">
         {label}
       </span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
+      <div className="h-[3px] flex-1 overflow-hidden rounded-full bg-text/[0.08]">
         <div
-          className="h-full rounded-full bg-logo-primary transition-[width] duration-150"
+          className="h-full rounded-full bg-logo-primary transition-[width] duration-100 ease-out"
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -258,15 +274,15 @@ const ActiveRecorder: React.FC = () => {
   };
 
   return (
-    <section className="flex flex-col items-center gap-4 rounded-xl border border-line bg-surface px-6 pt-6 pb-5">
-      <div className="flex items-center gap-2 text-xs font-medium">
+    <section className="pf-card flex flex-col items-center gap-5 px-6 pt-6 pb-5">
+      <div className="flex items-center gap-2 text-[12px] font-medium">
         <span
-          className={`h-2 w-2 rounded-full ${
+          className={`h-1.5 w-1.5 rounded-full ${
             finalizing
               ? "bg-mid-gray"
               : paused
                 ? "bg-warning"
-                : "animate-pulse bg-red-500"
+                : "animate-pulse bg-[#e5534b]"
           }`}
         />
         <span className="text-text-muted">
@@ -274,31 +290,33 @@ const ActiveRecorder: React.FC = () => {
         </span>
       </div>
 
-      <div className="font-mono text-5xl font-light tracking-tight text-text tabular-nums">
+      <div className="text-[44px] leading-none font-medium tracking-[-0.035em] tabular-nums">
         {formatClock(status.elapsed_ms)}
       </div>
 
-      <button
+      <motion.button
         type="button"
         onClick={() => void stop()}
         disabled={busy || finalizing}
         aria-label={t("meeting.stop")}
         title={t("meeting.stop")}
-        className="flex h-20 w-20 cursor-pointer items-center justify-center rounded-full bg-red-600 text-white shadow-[0_0_0_6px_rgba(220,38,38,0.15)] transition-transform hover:scale-105 hover:bg-red-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
+        whileTap={busy || finalizing ? undefined : { scale: PRESS_SCALE }}
+        transition={SPRING_SNAPPY}
+        className="flex h-[72px] w-[72px] cursor-pointer items-center justify-center rounded-full border-[3px] border-text/[0.16] disabled:cursor-not-allowed disabled:opacity-50"
       >
         {finalizing ? (
-          <Loader2 className="h-8 w-8 animate-spin" />
+          <Loader2 className="h-6 w-6 animate-spin text-text-muted" />
         ) : (
-          <Square className="h-7 w-7" fill="currentColor" />
+          <span className="h-7 w-7 rounded-[7px] bg-[#e5534b] shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]" />
         )}
-      </button>
+      </motion.button>
 
       {finalizing ? (
         <p className="text-xs text-text-muted">
           {t("meeting.finalizing.hint")}
         </p>
       ) : (
-        <div className="flex w-full max-w-sm flex-col gap-1.5">
+        <div className="flex w-full max-w-sm flex-col gap-2">
           <Meter label={t("meeting.levels.me")} level={status.mic_level} />
           <Meter
             label={t("meeting.levels.others")}
@@ -444,9 +462,7 @@ const PastMeetings: React.FC = () => {
 
   return (
     <section className="flex flex-col gap-2">
-      <h2 className="px-1 text-xs font-semibold tracking-wide text-text-muted uppercase">
-        {t("meeting.list.title")}
-      </h2>
+      <h2 className="pf-label px-1">{t("meeting.list.title")}</h2>
       {meetings == null && !listError ? (
         <p className="px-1 text-sm text-text-muted">
           {t("meeting.list.loading")}
@@ -463,65 +479,80 @@ const PastMeetings: React.FC = () => {
           </button>
         </div>
       ) : past.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-sm text-text-muted">
+        <p className="px-1 py-2 text-[13px] text-text-muted">
           {t("meeting.list.empty")}
         </p>
       ) : (
-        <ul className="flex flex-col overflow-hidden rounded-xl border border-line bg-surface">
-          {past.map((m) => (
-            <li
-              key={m.id}
-              className={`group flex items-center gap-3 border-b border-line px-3 py-2.5 last:border-b-0 ${
-                viewedId === m.id ? "bg-logo-primary/10" : "hover:bg-surface-2"
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => open(m.id)}
-                className="min-w-0 flex-1 cursor-pointer text-start"
+        <ul className="pf-card pf-rows flex flex-col overflow-hidden">
+          <AnimatePresence initial={false}>
+            {past.map((m) => (
+              <motion.li
+                key={m.id}
+                layout="position"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={SPRING}
+                className="overflow-hidden"
               >
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-medium">
-                    {m.title || t("meeting.untitled")}
-                  </span>
-                  {m.status === "interrupted" && (
-                    <span className="shrink-0 rounded-full bg-warning/15 px-1.5 py-px text-[10px] font-semibold text-warning">
-                      {t("meeting.list.status.interrupted")}
-                    </span>
-                  )}
-                  {m.status === "recording" && (
-                    <span className="shrink-0 rounded-full bg-red-500/15 px-1.5 py-px text-[10px] font-semibold text-red-400">
-                      {t("meeting.list.status.recording")}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-0.5 flex gap-2 text-xs text-text-muted">
-                  <span>{formatDate(m.started_at)}</span>
-                  <span>·</span>
-                  <span className="tabular-nums">
-                    {formatClock(m.duration_ms)}
-                  </span>
-                  {m.speaker_count > 0 && (
-                    <>
-                      <span>·</span>
-                      <span>
-                        {t("meeting.list.speakers", { count: m.speaker_count })}
+                <div
+                  className={`group flex items-center gap-3 px-4 py-3 transition-colors duration-150 ${
+                    viewedId === m.id
+                      ? "bg-text/[0.05]"
+                      : "hover:bg-text/[0.018]"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => open(m.id)}
+                    className="min-w-0 flex-1 cursor-pointer text-start"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-[14px] tracking-[-0.006em]">
+                        {m.title || t("meeting.untitled")}
                       </span>
-                    </>
-                  )}
+                      {m.status === "interrupted" && (
+                        <span className="shrink-0 rounded-full bg-warning/12 px-1.5 py-px text-[10.5px] font-medium text-warning">
+                          {t("meeting.list.status.interrupted")}
+                        </span>
+                      )}
+                      {m.status === "recording" && (
+                        <span className="shrink-0 rounded-full bg-[#e5534b]/12 px-1.5 py-px text-[10.5px] font-medium text-[#e5534b]">
+                          {t("meeting.list.status.recording")}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 flex gap-2 text-[12px] text-text-muted">
+                      <span>{formatDate(m.started_at)}</span>
+                      <span>·</span>
+                      <span className="tabular-nums">
+                        {formatClock(m.duration_ms)}
+                      </span>
+                      {m.speaker_count > 0 && (
+                        <>
+                          <span>·</span>
+                          <span>
+                            {t("meeting.list.speakers", {
+                              count: m.speaker_count,
+                            })}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setToDelete(m)}
+                    aria-label={t("meeting.list.delete")}
+                    title={t("meeting.list.delete")}
+                    className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-muted opacity-0 transition-[opacity,color,background-color] duration-150 group-hover:opacity-100 hover:bg-text/[0.07] hover:text-text focus-visible:opacity-100 active:scale-[0.92]"
+                  >
+                    <Trash2 className="h-[15px] w-[15px]" />
+                  </button>
                 </div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setToDelete(m)}
-                aria-label={t("meeting.list.delete")}
-                title={t("meeting.list.delete")}
-                className="shrink-0 cursor-pointer rounded-md p-1.5 text-text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500/10 hover:text-red-400 focus-visible:opacity-100"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </li>
-          ))}
+              </motion.li>
+            ))}
+          </AnimatePresence>
         </ul>
       )}
 

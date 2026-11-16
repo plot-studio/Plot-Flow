@@ -58,7 +58,7 @@ static MIGRATIONS: &[M] = &[M::up(
 
 const INFO_COLUMNS: &str = "m.id, m.title, m.started_at, m.ended_at, m.duration_ms, m.mic, \
      m.system_audio, m.status, m.summary, \
-     (SELECT COUNT(*) FROM meeting_segments s WHERE s.meeting_id = m.id) AS segment_count, \
+     (SELECT COUNT(*) FROM meeting_segments s WHERE s.meeting_id = m.id AND s.text <> '') AS segment_count, \
      (SELECT COUNT(*) FROM meeting_speakers p WHERE p.meeting_id = m.id) AS speaker_count";
 
 const SPEAKER_COLUMNS: &str = "id, meeting_id, slot, source, label, name, color_index";
@@ -158,7 +158,29 @@ impl MeetingStore {
                 params![id],
             )?;
         }
+        // Tentative rows that never got text (the crash came before their
+        // recognition) are noise: drop them. Older versions marked them final
+        // first, so clean every interrupted meeting, not just the new ones.
+        let removed = conn.execute(
+            "DELETE FROM meeting_segments
+             WHERE text = ''
+               AND meeting_id IN (SELECT id FROM meetings WHERE status = 'interrupted')",
+            [],
+        )?;
+        if removed > 0 {
+            info!("Removed {removed} empty segment(s) of interrupted meetings");
+        }
         Ok(ids.len())
+    }
+
+    /// Delete the segments of a meeting that never received text (tentative
+    /// rows left behind when finalization was cut short). Returns the count.
+    pub fn delete_empty_segments(&self, meeting_id: i64) -> Result<usize> {
+        let removed = self.conn()?.execute(
+            "DELETE FROM meeting_segments WHERE meeting_id = ?1 AND text = ''",
+            params![meeting_id],
+        )?;
+        Ok(removed)
     }
 
     /// Insert a new meeting in `recording` state and return its id.
@@ -647,10 +669,26 @@ mod tests {
         assert_eq!(info.status, MeetingRecordStatus::Interrupted);
         assert!(info.ended_at.is_some());
         assert_eq!(info.duration_ms, 4_000);
-        assert!(store
-            .list_segments(id)
-            .unwrap()
-            .iter()
-            .all(|segment| segment.is_final));
+        // The empty tentative row is gone; the recognized one stays.
+        let segments = store.list_segments(id).unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].text, "x");
+        assert!(segments[0].is_final);
+        assert_eq!(info.segment_count, 1);
+    }
+
+    #[test]
+    fn segment_count_ignores_rows_without_text() {
+        let (_dir, store) = open_temp();
+        let id = store.create_meeting("c", 1, both()).unwrap();
+        store
+            .insert_segment(id, 0, 10, None, MeetingSource::Microphone, "a", true)
+            .unwrap();
+        store
+            .insert_segment(id, 10, 20, None, MeetingSource::Microphone, "", false)
+            .unwrap();
+        assert_eq!(store.get_info(id).unwrap().unwrap().segment_count, 1);
+        assert_eq!(store.delete_empty_segments(id).unwrap(), 1);
+        assert_eq!(store.list_segments(id).unwrap().len(), 1);
     }
 }

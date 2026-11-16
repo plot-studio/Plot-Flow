@@ -76,7 +76,8 @@ export function MonoActivityHeatmap({
   const totalContributions = weeks
     .flat()
     .reduce((sum, day) => sum + (day?.count || 0), 0);
-  const colorScale = { bg: "#96a36c" };
+  // Copper-gold accent (theme.css --dark-color-logo-primary).
+  const colorScale = { bg: "#c6a27c" };
   const MONTH_NAMES = [
     ...new Set(
       weeks
@@ -118,10 +119,10 @@ export function MonoActivityHeatmap({
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: reduce ? 0 : 0.35, ease: [0.16, 1, 0.3, 1] }}
         className={cn(
-          "relative w-full rounded-3xl transition-all duration-300 group flex flex-col justify-between overflow-hidden p-3.5 sm:p-4 font-sans",
+          "relative w-full rounded-[14px] transition-all duration-300 group flex flex-col justify-between overflow-hidden p-3.5 sm:p-4 font-sans",
           compact ? "aspect-[16/10] min-h-[220px] w-full" : "min-h-[290px]",
           isDark
-            ? "bg-[#141414] border border-white/[0.08] text-white shadow-[0_4px_20px_rgba(0,0,0,0.3)] hover:border-white/20"
+            ? "bg-surface border border-text/[0.065] text-text shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] hover:border-text/15"
             : "bg-white shadow-[0_4px_20px_rgba(0,0,0,0.04)] border border-neutral-200 text-black hover:border-neutral-300",
         )}
       >
@@ -139,7 +140,7 @@ export function MonoActivityHeatmap({
           <div
             className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-mono ${
               isDark
-                ? "bg-white/5 text-neutral-400"
+                ? "bg-text/[0.05] text-text-muted"
                 : "bg-neutral-100 text-neutral-600"
             }`}
           >
@@ -154,7 +155,7 @@ export function MonoActivityHeatmap({
               className="bg-transparent border-0 w-[44px]"
             >
               {years.map((value) => (
-                <option key={value} value={value} className="bg-[#141414]">
+                <option key={value} value={value} className="bg-surface-2">
                   {value}
                 </option>
               ))}
@@ -169,7 +170,7 @@ export function MonoActivityHeatmap({
               className="bg-transparent border-0"
             >
               {[0, 1, 2].map((value) => (
-                <option key={value} value={value} className="bg-[#141414]">
+                <option key={value} value={value} className="bg-surface-2">
                   {value === 2 ? weekCount - 19 : value * 20 + 1}–
                   {value === 2 ? weekCount : value * 20 + 20}
                 </option>
@@ -181,8 +182,8 @@ export function MonoActivityHeatmap({
         {/* Main Heatmap Stage Grid */}
         <div
           className={cn(
-            "relative w-full flex-1 rounded-[14px] overflow-hidden p-2.5 sm:p-3 transition-colors duration-300 flex flex-col justify-between items-center min-h-0",
-            isDark ? "bg-[#131313]" : "bg-[#f4f4f6]",
+            "relative w-full flex-1 rounded-[10px] overflow-hidden p-2.5 sm:p-3 transition-colors duration-300 flex flex-col justify-between items-center min-h-0",
+            isDark ? "bg-background" : "bg-[#f4f4f6]",
           )}
         >
           {/* Month Headers */}
@@ -190,7 +191,7 @@ export function MonoActivityHeatmap({
             {MONTH_NAMES.map((m, idx) => (
               <span
                 key={idx}
-                className={`text-[10px] font-mono text-center flex-1 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}
+                className={`text-[10px] font-mono text-center flex-1 ${isDark ? "text-text-muted" : "text-neutral-500"}`}
               >
                 {m}
               </span>
@@ -255,11 +256,11 @@ export function MonoActivityHeatmap({
             className="relative h-4 w-full shrink-0 flex items-center justify-center"
           >
             {hoveredDay ? (
-              <span className="text-[10px] sm:text-[11px] font-mono font-medium text-neutral-200">
+              <span className="text-[10px] sm:text-[11px] font-mono font-medium text-text">
                 {hoveredDay.date}
               </span>
             ) : (
-              <span className="text-[10px] font-mono opacity-40 text-neutral-400">
+              <span className="text-[10px] font-mono opacity-60 text-text-muted">
                 {t("statistics.heatmapHint")}
               </span>
             )}

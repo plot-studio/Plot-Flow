@@ -53,12 +53,18 @@ const OVERLAY_HEIGHT: f64 = 50.0;
 const OVERLAY_STREAM_WIDTH: f64 = 400.0;
 const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 
+// Smart-insert notice pill ("Text saved — press Ctrl+V"): `.scard.compact.csaved` is 392 wide.
+const OVERLAY_SAVED_WIDTH: f64 = 400.0;
+
+/// How long the smart-insert notice stays up after a recording.
+const SAVED_NOTICE_MS: u64 = 4500;
+
 /// Overlay window size (logical) for a given UI state.
 fn overlay_dimensions(state: &str) -> (f64, f64) {
-    if state == "streaming" {
-        (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
-    } else {
-        (OVERLAY_WIDTH, OVERLAY_HEIGHT)
+    match state {
+        "streaming" => (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT),
+        "saved" => (OVERLAY_SAVED_WIDTH, OVERLAY_HEIGHT),
+        _ => (OVERLAY_WIDTH, OVERLAY_HEIGHT),
     }
 }
 
@@ -628,6 +634,27 @@ pub fn show_transcribing_overlay(app_handle: &AppHandle) {
 /// Shows the processing overlay window
 pub fn show_processing_overlay(app_handle: &AppHandle) {
     show_overlay_state(app_handle, "processing");
+}
+
+/// Smart insert held text instead of pasting it: show a short "Text saved —
+/// press Ctrl+V" pill in place of the overlay, then hide it after a few
+/// seconds unless a new recording has shown the overlay in the meantime.
+pub fn show_saved_notice(app_handle: &AppHandle) {
+    if settings::get_settings(app_handle).overlay_style == OverlayStyle::None {
+        hide_recording_overlay(app_handle);
+        return;
+    }
+    let handle = app_handle.clone();
+    let _ = app_handle.run_on_main_thread(move || {
+        show_overlay_state_on_main(&handle, "saved");
+        let shown_at = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(SAVED_NOTICE_MS));
+            if OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) == shown_at {
+                hide_recording_overlay(&handle);
+            }
+        });
+    });
 }
 
 /// Updates the overlay window position based on current settings

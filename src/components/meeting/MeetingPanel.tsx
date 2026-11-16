@@ -28,7 +28,7 @@ import {
 const EXPORT_FORMATS: MeetingExportFormat[] = ["txt", "md", "json", "srt"];
 
 const iconBtn =
-  "inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs font-medium text-text transition-colors hover:bg-surface-2 hover:border-logo-primary/60 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer";
+  "inline-flex h-7 items-center gap-1.5 rounded-lg border border-text/[0.06] bg-text/[0.06] px-2.5 text-xs font-medium text-text transition-[background-color,border-color,transform] duration-100 hover:bg-text/[0.1] enabled:active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer";
 
 export const MeetingPanel: React.FC = () => {
   const { t } = useTranslation();
@@ -42,7 +42,7 @@ export const MeetingPanel: React.FC = () => {
 
   return (
     <div className="flex h-full flex-col text-text">
-      <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+      <div className="flex h-12 items-center gap-2 border-b border-line px-3">
         {detail ? (
           <TitleEditor meetingId={detail.info.id} title={detail.info.title} />
         ) : (
@@ -65,7 +65,7 @@ export const MeetingPanel: React.FC = () => {
           onClick={() => void setPanel(false)}
           aria-label={t("meeting.panel.close")}
           title={t("meeting.panel.close")}
-          className="shrink-0 cursor-pointer rounded-md p-1 text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+          className="shrink-0 cursor-pointer rounded-full p-1.5 text-text-muted transition-colors hover:bg-text/6 hover:text-text"
         >
           <X className="h-4 w-4" />
         </button>
@@ -141,7 +141,7 @@ const TitleEditor: React.FC<{ meetingId: number; title: string }> = ({
             setEditing(false);
           }
         }}
-        className="min-w-0 flex-1 rounded-md border border-logo-primary bg-surface-2 px-2 py-0.5 text-sm font-semibold text-text outline-none"
+        className="min-w-0 flex-1 rounded-lg border border-logo-primary/70 bg-surface-2 px-2 py-0.5 text-sm font-semibold text-text outline-none ring-2 ring-logo-primary/20"
       />
     );
   }
@@ -151,7 +151,7 @@ const TitleEditor: React.FC<{ meetingId: number; title: string }> = ({
       type="button"
       onClick={() => setEditing(true)}
       title={t("meeting.detail.editTitle")}
-      className="min-w-0 flex-1 cursor-text truncate rounded-md px-2 py-0.5 text-start text-sm font-semibold hover:bg-surface-2"
+      className="min-w-0 flex-1 cursor-text truncate rounded-lg px-2 py-0.5 text-start text-sm font-semibold tracking-tight transition-colors hover:bg-text/5"
     >
       {title || t("meeting.untitled")}
     </button>
@@ -214,7 +214,7 @@ const Toolbar: React.FC<{ meetingId: number; isLive: boolean }> = ({
   };
 
   return (
-    <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+    <div className="flex h-12 items-center gap-2 border-b border-line px-3">
       <div className="relative" ref={exportRef}>
         <button
           type="button"
@@ -227,13 +227,13 @@ const Toolbar: React.FC<{ meetingId: number; isLive: boolean }> = ({
           <ChevronDown className="h-3 w-3 opacity-70" />
         </button>
         {exportOpen && (
-          <div className="absolute start-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-lg border border-line bg-surface-2 py-1 shadow-lg">
+          <div className="pf-dialog-in absolute start-0 top-full z-20 mt-1.5 w-48 overflow-hidden rounded-xl border border-text/10 bg-surface-2 p-1 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.6)]">
             {EXPORT_FORMATS.map((f) => (
               <button
                 key={f}
                 type="button"
                 onClick={() => void doExport(f)}
-                className="block w-full cursor-pointer px-3 py-1.5 text-start text-xs hover:bg-logo-primary/20"
+                className="block w-full cursor-pointer rounded-xl px-3 py-1.5 text-start text-xs transition-colors hover:bg-text/6"
               >
                 {t(`meeting.detail.formats.${f}`)}
               </button>
@@ -241,20 +241,28 @@ const Toolbar: React.FC<{ meetingId: number; isLive: boolean }> = ({
           </div>
         )}
       </div>
-      <button
-        type="button"
-        className={iconBtn}
-        onClick={() => void onSummary()}
-        disabled={summarizing != null || (!hasSegments && !isLive)}
-        title={t("meeting.summary.button")}
+      {/* Summaries need the whole transcript: only after the meeting stops.
+          The tooltip sits on a wrapper because disabled buttons get no hover. */}
+      <span
+        className="inline-flex"
+        title={
+          isLive ? t("meeting.summary.afterStop") : t("meeting.summary.button")
+        }
       >
-        {summarizing === meetingId ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Bot className="h-3.5 w-3.5 text-logo-primary" />
-        )}
-        {t("meeting.summary.button")}
-      </button>
+        <button
+          type="button"
+          className={iconBtn}
+          onClick={() => void onSummary()}
+          disabled={summarizing != null || isLive || !hasSegments}
+        >
+          {summarizing === meetingId ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Bot className="h-3.5 w-3.5 text-logo-primary" />
+          )}
+          {t("meeting.summary.button")}
+        </button>
+      </span>
     </div>
   );
 };
@@ -299,7 +307,7 @@ const SummarySection: React.FC<{ meetingId: number }> = ({ meetingId }) => {
       : null;
 
   return (
-    <div className="max-h-[45%] shrink-0 overflow-y-auto border-b border-line bg-logo-primary/5 px-3 py-2.5">
+    <div className="max-h-[45%] shrink-0 overflow-y-auto border-b border-line bg-gradient-to-b from-logo-primary/[0.08] to-transparent px-3.5 py-3">
       <div className="mb-1.5 flex items-center gap-2">
         <Bot className="h-4 w-4 text-logo-primary" />
         <h3 className="flex-1 text-xs font-semibold tracking-wide text-text uppercase">
@@ -335,7 +343,7 @@ const SummarySection: React.FC<{ meetingId: number }> = ({ meetingId }) => {
           {t("meeting.summary.running")}
         </div>
       ) : needModel ? (
-        <div className="rounded-lg border border-line bg-surface-2 p-3">
+        <div className="rounded-xl border border-text/[0.08] bg-surface-2 p-3">
           <p className="text-sm font-medium">
             {t("meeting.summary.needModel")}
           </p>
@@ -371,7 +379,7 @@ const SummarySection: React.FC<{ meetingId: number }> = ({ meetingId }) => {
             <button
               type="button"
               onClick={() => void install()}
-              className="mt-2.5 inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-logo-primary px-3 py-1 text-xs font-semibold text-on-accent hover:bg-logo-primary/85"
+              className="pf-accent mt-2.5 inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-transform duration-100 active:scale-[0.97]"
             >
               <Download className="h-3.5 w-3.5" />
               {t("meeting.summary.install")}
@@ -449,14 +457,14 @@ const Transcript: React.FC<{
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="h-full overflow-y-auto px-3 py-2 select-text"
+        className="h-full overflow-y-auto px-3.5 py-3 select-text"
       >
         {visible.length === 0 ? (
           <p className="py-8 text-center text-sm text-text-muted">
             {isLive ? t("meeting.live.empty") : t("meeting.detail.empty")}
           </p>
         ) : (
-          <ul className="flex flex-col gap-2.5">
+          <ul className="flex flex-col gap-3">
             {visible.map((seg) => (
               <SegmentRow
                 key={seg.id}
@@ -472,7 +480,7 @@ const Transcript: React.FC<{
         <button
           type="button"
           onClick={jumpToNew}
-          className="absolute bottom-3 left-1/2 flex -translate-x-1/2 cursor-pointer items-center gap-1 rounded-full border border-line bg-surface-2 px-3 py-1 text-xs font-medium shadow-lg hover:border-logo-primary"
+          className="absolute bottom-3 left-1/2 flex -translate-x-1/2 cursor-pointer items-center gap-1 rounded-full border border-text/10 bg-surface-2/85 px-3 py-1 text-xs font-medium shadow-[0_10px_28px_-8px_rgba(0,0,0,0.7)] backdrop-blur-xl transition-[border-color,transform] duration-150 hover:border-text/20 active:scale-[0.97]"
         >
           <ArrowDown className="h-3.5 w-3.5" />
           {t("meeting.live.toNew")}

@@ -16,7 +16,7 @@ export interface LlmInstallProgress {
 }
 
 /** Width the native window gains when the panel is open (see meeting_set_panel). */
-export const MEETING_PANEL_WIDTH = 460;
+export const MEETING_PANEL_WIDTH = 420;
 const PANEL_EXIT_MS = 220;
 
 interface MeetingUiState {
@@ -57,6 +57,19 @@ interface MeetingUiState {
 
 let panelSeq = 0;
 let detailSeq = 0;
+/** Intent of the latest setPanel call (survives the async window resize). */
+let wantPanelOpen = false;
+
+/** Resize the native window for the panel; failures are only logged. */
+export const resizeWindow = async (wide: boolean) => {
+  const res = await commands.meetingSetPanel(wide).catch((e) => ({
+    status: "error" as const,
+    error: String(e),
+  }));
+  if (res.status === "error") {
+    console.warn(`meeting_set_panel(${wide}) failed:`, res.error);
+  }
+};
 
 export const useMeetingUi = create<MeetingUiState>((set, get) => ({
   status: null,
@@ -98,30 +111,28 @@ export const useMeetingUi = create<MeetingUiState>((set, get) => ({
 
   setPanel: async (open) => {
     const seq = ++panelSeq;
+    wantPanelOpen = open;
     if (open) {
       if (get().panelOpen) return;
       // Widen the native window first so the main column never gets squeezed.
-      const res = await commands.meetingSetPanel(true).catch((e) => ({
-        status: "error" as const,
-        error: String(e),
-      }));
-      if (res.status === "error") {
-        console.warn("meeting_set_panel(true) failed:", res.error);
+      await resizeWindow(true);
+      if (seq === panelSeq) {
+        set({ panelOpen: true });
+      } else if (!wantPanelOpen && !get().panelOpen) {
+        // A close arrived while the window was growing: the close saw no
+        // open panel, so undo the widening here or the window stays wide.
+        await resizeWindow(false);
       }
-      if (seq === panelSeq) set({ panelOpen: true });
     } else {
-      if (!get().panelOpen) return;
-      set({ panelOpen: false });
-      // Let the slide-out animation finish before the window shrinks.
-      await new Promise((r) => setTimeout(r, PANEL_EXIT_MS));
-      if (seq !== panelSeq) return;
-      const res = await commands.meetingSetPanel(false).catch((e) => ({
-        status: "error" as const,
-        error: String(e),
-      }));
-      if (res.status === "error") {
-        console.warn("meeting_set_panel(false) failed:", res.error);
+      if (get().panelOpen) {
+        set({ panelOpen: false });
+        // Let the slide-out animation finish before the window shrinks.
+        await new Promise((r) => setTimeout(r, PANEL_EXIT_MS));
+        if (seq !== panelSeq) return;
       }
+      // Always shrink (idempotent): an open still in flight may have widened
+      // the window without the panel ever being shown.
+      await resizeWindow(false);
     }
   },
 
@@ -277,9 +288,9 @@ function mergeDetail(
 }
 
 export const SPEAKER_COLORS = [
-  "#96a36c",
+  "#d9a46b",
   "#6ca3a0",
-  "#c08a5b",
+  "#96a36c",
   "#8c84c9",
   "#c46f8a",
   "#5f93c9",

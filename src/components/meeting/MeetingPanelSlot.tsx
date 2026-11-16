@@ -12,10 +12,12 @@ import {
 import {
   MEETING_PANEL_WIDTH,
   isActiveState,
+  resizeWindow,
   useMeetingUi,
   type LlmInstallProgress,
 } from "./meetingStore";
 import { MeetingPanel } from "./MeetingPanel";
+import { SPRING } from "@/lib/motion";
 
 /**
  * Always-mounted host for meeting mode: subscribes to backend events once,
@@ -53,13 +55,29 @@ export const MeetingPanelSlot: React.FC = () => {
       }
     };
 
+    // The native window keeps its size across a reload/crash of the webview:
+    // without a live meeting (and no panel shown) put it back to normal width.
+    const shrinkIfIdle = (status: MeetingStatus | null) => {
+      if ((!status || !isActiveState(status)) && !store().panelOpen) {
+        void resizeWindow(false);
+      }
+    };
+
     // Recover state on mount.
     void commands
       .meetingStatus()
       .then((res) => {
-        if (res.status === "ok") followStatus(res.data);
+        if (res.status === "ok") {
+          followStatus(res.data);
+          shrinkIfIdle(res.data);
+        } else {
+          shrinkIfIdle(null);
+        }
       })
-      .catch((e) => console.warn("meeting_status failed:", e));
+      .catch((e) => {
+        console.warn("meeting_status failed:", e);
+        shrinkIfIdle(null);
+      });
     void store().refreshLlm();
 
     const scheduleSpeakerFetch = () => {
@@ -133,11 +151,11 @@ export const MeetingPanelSlot: React.FC = () => {
       {panelOpen && (
         <motion.aside
           key="meeting-panel"
-          className="h-full shrink-0 overflow-hidden border-s border-line bg-surface"
+          className="h-full shrink-0 overflow-hidden border-s border-text/[0.07] bg-surface"
           initial={reduceMotion ? { opacity: 0 } : { width: 0, opacity: 0 }}
           animate={{ width: MEETING_PANEL_WIDTH, opacity: 1 }}
           exit={reduceMotion ? { opacity: 0 } : { width: 0, opacity: 0 }}
-          transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
+          transition={SPRING}
         >
           <div
             className="h-full"

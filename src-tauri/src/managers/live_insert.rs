@@ -11,9 +11,10 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 
 use super::transcription::TranscriptionManager;
+use crate::smart_insert::Delivery;
 
 const SAMPLE_RATE: usize = 16_000;
 /// A pause this long ends a phrase. With VAD on, silence means frames stop
@@ -25,6 +26,8 @@ const MIN_PHRASE_MS: usize = 600;
 const MAX_PHRASE_MS: usize = 20_000;
 /// RMS below this counts as silence when VAD is off.
 const SILENCE_RMS: f32 = 0.004;
+/// Wait before the single retry of a failed phrase recognition.
+const RETRY_DELAY: Duration = Duration::from_secs(1);
 
 /// How the next phrase joins the text pasted so far.
 pub(crate) fn joiner(previous: Option<&str>, next: &str) -> &'static str {
@@ -44,12 +47,33 @@ pub(crate) fn joiner(previous: Option<&str>, next: &str) -> &'static str {
     }
 }
 
-/// Worker loop. Returns the full text pasted during the recording.
+/// Recognize a phrase; the engine may be briefly busy, so retry once.
+fn transcribe_with_retry(tm: &TranscriptionManager, audio: Vec<f32>) -> anyhow::Result<String> {
+    match tm.transcribe(audio.clone()) {
+        Ok(text) => Ok(text),
+        Err(e) => {
+            if tm.live_insert_cancelled() {
+                return Err(e);
+            }
+            warn!("Live insert: phrase recognition failed ({e}); retrying in {RETRY_DELAY:?}");
+            std::thread::sleep(RETRY_DELAY);
+            if tm.live_insert_cancelled() {
+                return Err(e);
+            }
+            tm.transcribe(audio)
+        }
+    }
+}
+
+/// Worker loop. Returns the full text delivered during the recording —
+/// pasted, or held by smart insert because the cursor was not in a text
+/// field (history keeps it either way).
 pub(crate) fn run(tm: &TranscriptionManager, frames: mpsc::Receiver<Vec<f32>>) -> String {
     let mut phrase: Vec<f32> = Vec::new();
     let mut last_voice = Instant::now();
     let mut pasted = String::new();
     let mut last_piece: Option<String> = None;
+    crate::smart_insert::begin_session();
 
     loop {
         let disconnected = match frames.recv_timeout(Duration::from_millis(100)) {
@@ -77,14 +101,14 @@ pub(crate) fn run(tm: &TranscriptionManager, frames: mpsc::Receiver<Vec<f32>>) -
             || (paused && phrase_ms >= MIN_PHRASE_MS);
         if flush && !phrase.is_empty() {
             let audio = std::mem::take(&mut phrase);
-            match tm.transcribe(audio) {
+            match transcribe_with_retry(tm, audio) {
                 Ok(text) => {
                     let text = text.trim().to_string();
                     if !text.is_empty() && !tm.live_insert_cancelled() {
-                        let piece =
-                            format!("{}{}", joiner(last_piece.as_deref(), &text), text);
-                        if paste_now(tm, piece.clone()) {
-                            pasted.push_str(&piece);
+                        let lead = joiner(last_piece.as_deref(), &text);
+                        if deliver_now(tm, &text, lead) {
+                            pasted.push_str(lead);
+                            pasted.push_str(&text);
                             last_piece = Some(text);
                         }
                     }
@@ -99,22 +123,24 @@ pub(crate) fn run(tm: &TranscriptionManager, frames: mpsc::Receiver<Vec<f32>>) -
     }
 }
 
-/// Paste on the main thread (as the normal path does) and wait for it, so
-/// phrases land in order.
-fn paste_now(tm: &TranscriptionManager, text: String) -> bool {
+/// Paste (or, with smart insert, hold) on the main thread as the normal path
+/// does, and wait for it, so phrases land in order. `true` when the phrase
+/// was delivered — pasted or held for Ctrl+V.
+fn deliver_now(tm: &TranscriptionManager, text: &str, lead: &'static str) -> bool {
     let app = tm.app_handle().clone();
     let (tx, rx) = mpsc::channel();
     let app_for_paste = app.clone();
+    let text = text.to_string();
     let scheduled = app.run_on_main_thread(move || {
-        let _ = tx.send(crate::utils::paste(text, app_for_paste));
+        let _ = tx.send(crate::smart_insert::deliver(&app_for_paste, &text, lead));
     });
     if let Err(e) = scheduled {
         error!("Live insert: cannot schedule paste: {e:?}");
         return false;
     }
     match rx.recv_timeout(Duration::from_secs(10)) {
-        Ok(Ok(())) => true,
-        Ok(Err(e)) => {
+        Ok(Delivery::Pasted) | Ok(Delivery::Held) => true,
+        Ok(Delivery::Failed(e)) => {
             error!("Live insert: paste failed: {e}");
             false
         }

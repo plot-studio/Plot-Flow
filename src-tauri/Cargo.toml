@@ -1,6 +1,6 @@
 [package]
 name = "plot-flow"
-version = "1.4.0"
+version = "1.6.0"
 description = "Plot Flow"
 authors = ["cjpais"]
 edition = "2021"
@@ -129,10 +129,16 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Ole",
   "Win32_System_Memory",
   "Win32_System_Threading",
+  # Local LLM: llama-server lives in a kill-on-close Job Object, so it dies
+  # with the app even after a crash (CreateJobObjectW needs Win32_Security).
+  "Win32_System_JobObjects",
+  "Win32_Security",
   "Win32_System_Variant",
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_UI_WindowsAndMessaging",
+  # Smart insert: UI Automation focus probe (is the cursor in a text field?).
+  "Win32_UI_Accessibility",
 ] }
 winreg = "0.55"
 

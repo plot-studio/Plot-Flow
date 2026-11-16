@@ -101,12 +101,12 @@ export const Tooltip: React.FC<TooltipProps> = ({
         zIndex: 9999,
         opacity: coords ? 1 : 0,
       }}
-      className="px-3 py-2 bg-background border border-mid-gray/80 rounded-lg shadow-lg whitespace-normal transition-opacity duration-150"
+      className="px-3 py-2 bg-surface-2 text-text text-[12.5px] border border-text/10 rounded-lg shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_12px_32px_-8px_rgba(0,0,0,0.6)] whitespace-normal transition-opacity duration-150"
     >
       {children}
       <div
         style={{ left: coords?.arrowLeft ?? 0 }}
-        className={`absolute ${arrowClasses} transform -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-mid-gray/80`}
+        className={`absolute ${arrowClasses} transform -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-surface-2`}
       />
     </div>,
     document.body,

@@ -498,6 +498,10 @@ pub struct AppSettings {
     /// dictation at the end (models that cannot stream, i.e. GigaAM).
     #[serde(default = "default_live_insert")]
     pub live_insert: bool,
+    /// Paste only when the keyboard focus is in a text field; otherwise keep
+    /// the text in memory and on the clipboard (Ctrl+V) instead of losing it.
+    #[serde(default = "default_smart_insert")]
+    pub smart_insert: bool,
     #[serde(default)]
     pub transcribe_accelerator: TranscribeAcceleratorSetting,
     #[serde(default)]
@@ -601,6 +605,10 @@ fn default_auto_mic_gain() -> bool {
 }
 
 fn default_live_insert() -> bool {
+    true
+}
+
+fn default_smart_insert() -> bool {
     true
 }
 
@@ -984,6 +992,7 @@ pub fn get_default_settings() -> AppSettings {
         custom_filler_words: None,
         auto_mic_gain: default_auto_mic_gain(),
         live_insert: default_live_insert(),
+        smart_insert: default_smart_insert(),
         transcribe_accelerator: TranscribeAcceleratorSetting::default(),
         ort_accelerator: OrtAcceleratorSetting::default(),
         transcribe_gpu_device: default_transcribe_gpu_device(),

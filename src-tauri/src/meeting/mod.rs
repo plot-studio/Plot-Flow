@@ -18,7 +18,7 @@ pub mod types;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -222,9 +222,8 @@ impl MeetingManager {
                 audio_dir: audio_dir.clone(),
                 vad_model_path: vad_model_path.clone(),
                 selected_microphone: selected_microphone.clone(),
-                jobs: job_tx.clone(),
             };
-            match session::spawn_source(ctx) {
+            match session::spawn_source(ctx, job_tx.clone()) {
                 Ok(handle) => {
                     threads.push(handle);
                     match source {
@@ -363,8 +362,10 @@ impl MeetingManager {
         self.emit_status();
 
         let duration_ms = shared.elapsed_ms();
-        self.shutdown_threads(&shared, handles);
+        let drained = self.shutdown_threads(&shared, handles, None);
 
+        // Rows still without text were never recognized (drain timed out).
+        let _ = self.store.delete_empty_segments(meeting_id);
         let ended_at = chrono::Utc::now().timestamp_millis();
         let finish_result = self.store.finish_meeting(
             meeting_id,
@@ -372,8 +373,21 @@ impl MeetingManager {
             duration_ms,
             MeetingRecordStatus::Completed,
         );
+        if finish_result.is_ok() && drained {
+            // Only the text matters to the owner: the WAV safety copies of a
+            // cleanly finished meeting are not kept (interrupted ones are).
+            let _ = std::fs::remove_dir_all(self.meetings_dir.join(meeting_id.to_string()));
+            let _ = self.store.set_audio_dir(meeting_id, "");
+        }
         self.clear_active();
         self.emit_status();
+        // Unload settings were held back while the meeting ran.
+        if let Some(tm) = self
+            .app
+            .try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
+        {
+            tm.maybe_unload_immediately("meeting");
+        }
         finish_result.map_err(|e| format!("Не удалось завершить совещание: {e}"))?;
 
         let info = self
@@ -393,7 +407,7 @@ impl MeetingManager {
         shared.set_state(MeetingState::Finalizing);
         self.emit_status();
 
-        self.shutdown_threads(&shared, handles);
+        self.shutdown_threads(&shared, handles, None);
 
         let result = self.store.delete_meeting(meeting_id);
         let _ = std::fs::remove_dir_all(self.meetings_dir.join(meeting_id.to_string()));
@@ -424,16 +438,74 @@ impl MeetingManager {
     }
 
     /// Flush capture threads (their last speech runs are queued), let the
-    /// worker drain the queue, then stop the ticker.
-    fn shutdown_threads(&self, shared: &Arc<SessionShared>, handles: SessionHandles) {
+    /// worker drain the queue, then stop the ticker. With `deadline`, every
+    /// wait is cut to fit before it (app exit). Returns `true` when the worker
+    /// finished (every queued segment was handled).
+    fn shutdown_threads(
+        &self,
+        shared: &Arc<SessionShared>,
+        handles: SessionHandles,
+        deadline: Option<Instant>,
+    ) -> bool {
+        let limit = |normal: Duration| match deadline {
+            Some(deadline) => normal.min(deadline.saturating_duration_since(Instant::now())),
+            None => normal,
+        };
         shared.request_capture_stop();
         for handle in handles.sources {
-            session::join_with_timeout(handle, CAPTURE_JOIN_TIMEOUT, "capture thread");
+            session::join_with_timeout(handle, limit(CAPTURE_JOIN_TIMEOUT), "capture thread");
         }
         // Senders are gone once the capture threads exit → worker drains and ends.
-        session::join_with_timeout(handles.worker, WORKER_DRAIN_TIMEOUT, "transcription worker");
+        let drained = session::join_with_timeout(
+            handles.worker,
+            limit(WORKER_DRAIN_TIMEOUT),
+            "transcription worker",
+        );
         shared.request_ticker_stop();
-        session::join_with_timeout(handles.ticker, TICKER_JOIN_TIMEOUT, "status ticker");
+        session::join_with_timeout(handles.ticker, limit(TICKER_JOIN_TIMEOUT), "status ticker");
+        drained
+    }
+
+    /// App exit while a meeting runs: flush the capture threads and let the
+    /// worker transcribe what it can within `budget` (best effort), then mark
+    /// the meeting interrupted. Its WAV backup stays on disk.
+    pub fn shutdown_for_exit(&self, budget: Duration) {
+        let Some(shared) = self.active_shared() else {
+            return;
+        };
+        let meeting_id = shared.meeting_id;
+        log::info!("Meeting {meeting_id}: app exiting, closing the meeting as interrupted");
+        let deadline = Instant::now() + budget;
+        let duration_ms = shared.elapsed_ms();
+        shared
+            .exiting
+            .store(true, std::sync::atomic::Ordering::Release);
+        shared.set_state(MeetingState::Finalizing);
+
+        let handles = self.handles.lock().ok().and_then(|mut slot| slot.take());
+        match handles {
+            Some(handles) => {
+                self.shutdown_threads(&shared, handles, Some(deadline));
+            }
+            None => {
+                // A stop/discard is already tearing the threads down.
+                shared.request_capture_stop();
+            }
+        }
+        if shared.discard.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+        let _ = self.store.delete_empty_segments(meeting_id);
+        let ended_at = chrono::Utc::now().timestamp_millis();
+        if let Err(e) = self.store.finish_meeting(
+            meeting_id,
+            ended_at,
+            duration_ms,
+            MeetingRecordStatus::Interrupted,
+        ) {
+            log::error!("Meeting {meeting_id}: failed to mark interrupted at exit: {e}");
+        }
+        self.clear_active();
     }
 
     /// Delete a finished meeting (DB rows and audio folder).

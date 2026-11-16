@@ -16,17 +16,20 @@ import {
 } from "tauri-plugin-macos-permissions-api";
 import { ModelStateEvent, RecordingErrorEvent } from "./lib/types/events";
 import "./App.css";
+import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
 import SecureInputWarning from "./components/SecureInputWarning";
-import Footer from "./components/footer";
 import AccessibilityOnboarding from "./components/onboarding/AccessibilityOnboarding";
 import { BundledModelStatus } from "./components/BundledModelStatus";
 import { useBundledModel } from "./hooks/useBundledModel";
 import { withTimeout } from "./lib/bundledModel";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
+import { TitleBar } from "./components/shell/TitleBar";
 import { MeetingPanelSlot } from "./components/meeting";
 import { useSettingsStore } from "./stores/settingsStore";
+import { useNavigation } from "./stores/navigationStore";
 import { commands } from "@/bindings";
+import { SPRING, SPRING_PAGE } from "@/lib/motion";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 
 type OnboardingStep = "accessibility" | "done";
@@ -43,8 +46,9 @@ function App() {
   );
   const [startupError, setStartupError] = useState(false);
   const { status: modelStatus, refresh: refreshModel } = useBundledModel();
-  const [currentSection, setCurrentSection] =
-    useState<SidebarSection>("settings");
+  const currentSection = useNavigation((s) => s.section);
+  const setCurrentSection = useNavigation((s) => s.setSection);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
     (state) => state.refreshAudioDevices,
@@ -249,22 +253,32 @@ function App() {
         unstyled: true,
         classNames: {
           toast:
-            "bg-background border border-mid-gray/20 rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 text-sm",
-          title: "font-medium",
-          description: "text-mid-gray",
+            "bg-surface-2/85 backdrop-blur-xl backdrop-saturate-150 text-text border border-text/8 rounded-xl shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_16px_40px_-12px_rgba(0,0,0,0.6)] px-4 py-3 flex items-center gap-3 text-[13px] w-[340px] font-sans",
+          title: "font-medium tracking-tight",
+          description: "text-text-muted text-xs break-all",
           actionButton:
-            "px-2 py-1 text-xs font-medium rounded-lg border bg-mid-gray/10 border-mid-gray/20 hover:bg-background-ui/30 hover:border-logo-primary cursor-pointer whitespace-nowrap",
+            "px-3 py-1 text-xs font-medium rounded-md border bg-surface border-text/10 hover:bg-text/5 cursor-pointer whitespace-nowrap",
         },
       }}
     />
   );
 
+  // Frameless window: every state renders inside the custom title bar shell.
+  const shell = (body: ReactNode) => (
+    <MotionConfig reducedMotion="user" transition={SPRING}>
+      {toaster}
+      <div className="pf-material h-screen flex flex-col overflow-hidden text-text">
+        <TitleBar />
+        <div className="relative flex-1 min-h-0">{body}</div>
+      </div>
+    </MotionConfig>
+  );
+
   // Still checking onboarding status
   if (onboardingStep === null) {
-    return (
+    return shell(
       <>
-        {toaster}
-        <div className="h-screen flex items-center justify-center p-4">
+        <div className="h-full flex items-center justify-center p-4">
           <div
             role={startupError ? "alert" : "status"}
             className="text-sm text-center"
@@ -283,7 +297,7 @@ function App() {
             )}
           </div>
         </div>
-      </>
+      </>,
     );
   }
 
@@ -299,42 +313,55 @@ function App() {
     content = (
       <div
         dir={direction}
-        className="h-screen flex flex-col select-none cursor-default"
+        className="h-full flex select-none cursor-default overflow-hidden"
       >
-        {/* Main content area that takes remaining space */}
-        <div className="flex-1 flex overflow-hidden">
-          <Sidebar
-            activeSection={currentSection}
-            onSectionChange={setCurrentSection}
-          />
-          {/* Scrollable content area */}
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="flex-1 overflow-y-auto">
-              <div className="flex flex-col items-center p-4 gap-4">
+        <Sidebar
+          activeSection={currentSection}
+          onSectionChange={setCurrentSection}
+        />
+        {/* Inset content sheet: page column + optional meeting panel */}
+        <div className="pf-sheet mb-2 me-2 flex min-w-0 flex-1 overflow-hidden rounded-[12px]">
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            <div
+              ref={scrollRef}
+              className="flex-1 overflow-y-auto overflow-x-hidden"
+            >
+              <div className="flex flex-col items-center gap-4 px-8 pt-7 pb-10">
                 <AccessibilityPermissions />
                 <SecureInputWarning />
                 <BundledModelStatus
                   status={modelStatus}
                   onRetry={() => void refreshModel()}
                 />
-                {renderSettingsContent(currentSection)}
+                <AnimatePresence
+                  mode="wait"
+                  initial={false}
+                  onExitComplete={() => scrollRef.current?.scrollTo({ top: 0 })}
+                >
+                  <motion.div
+                    key={currentSection}
+                    className="flex w-full flex-col items-center"
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{
+                      opacity: 0,
+                      transition: { duration: 0.08, ease: "easeOut" },
+                    }}
+                    transition={SPRING_PAGE}
+                  >
+                    {renderSettingsContent(currentSection)}
+                  </motion.div>
+                </AnimatePresence>
               </div>
             </div>
           </div>
           <MeetingPanelSlot />
         </div>
-        {/* Fixed footer at bottom */}
-        <Footer />
       </div>
     );
   }
 
-  return (
-    <>
-      {toaster}
-      {content}
-    </>
-  );
+  return shell(content);
 }
 
 export default App;

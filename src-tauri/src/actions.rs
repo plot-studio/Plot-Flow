@@ -831,7 +831,9 @@ impl ShortcutAction for TranscribeAction {
                                         statistics.record(word_count, audio_ms, statistics_day);
                                     }
                                 }
-                                utils::hide_recording_overlay(&ah);
+                                // Keeps the "saved — Ctrl+V" notice up if smart
+                                // insert held a phrase during the recording.
+                                crate::smart_insert::finish_overlay(&ah);
                                 set_tray_state(&ah, TrayIconState::Idle);
                             } else if processed.final_text.is_empty() {
                                 utils::hide_recording_overlay(&ah);
@@ -859,17 +861,24 @@ impl ShortcutAction for TranscribeAction {
                                             statistics.record(word_count, audio_ms, statistics_day);
                                         }
                                     }
-                                    match utils::paste(final_text, ah_clone.clone()) {
-                                        Ok(()) => debug!(
+                                    // Smart insert: paste only into a text field,
+                                    // otherwise keep the text for Ctrl+V.
+                                    crate::smart_insert::begin_session();
+                                    match crate::smart_insert::deliver(&ah_clone, &final_text, "")
+                                    {
+                                        crate::smart_insert::Delivery::Pasted => debug!(
                                             "Text pasted successfully in {:?}",
                                             paste_time.elapsed()
                                         ),
-                                        Err(e) => {
+                                        crate::smart_insert::Delivery::Held => debug!(
+                                            "Text held for Ctrl+V: the cursor is not in a text field"
+                                        ),
+                                        crate::smart_insert::Delivery::Failed(e) => {
                                             error!("Failed to paste transcription: {}", e);
                                             let _ = ah_clone.emit("paste-error", ());
                                         }
                                     }
-                                    utils::hide_recording_overlay(&ah_clone);
+                                    crate::smart_insert::finish_overlay(&ah_clone);
                                     set_tray_state(&ah_clone, TrayIconState::Idle);
                                 })
                                 .unwrap_or_else(|e| {

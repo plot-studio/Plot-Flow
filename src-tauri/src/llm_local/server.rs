@@ -98,8 +98,12 @@ pub fn stop() {
 
 /// Kills a server left over from a previous run that crashed (its pid is in
 /// `server.pid`). The image-name filter keeps us from killing an unrelated
-/// process that reused the pid.
-fn kill_stale(p: &LlmPaths) {
+/// process that reused the pid. Called at app startup and before a start.
+pub(super) fn kill_stale(p: &LlmPaths) {
+    if is_running() {
+        // Our own live server: its pid file is current, not stale.
+        return;
+    }
     let Ok(text) = std::fs::read_to_string(&p.pid_path) else {
         return;
     };
@@ -180,11 +184,31 @@ pub(super) fn server_args(model: &str, port: u16, gpu: bool) -> Vec<String> {
     args
 }
 
+/// The `-m` argument. llama.cpp opens the model with narrow-char file APIs,
+/// so a Cyrillic user name in the absolute path breaks the load. The server
+/// runs with `current_dir(bin_dir)`, and `bin\` and `models\` are siblings,
+/// so the model is passed as the pure-ASCII relative path `..\models\<file>`.
+/// Falls back to the absolute path when the layout is unexpected.
+pub(super) fn model_arg(p: &LlmPaths) -> String {
+    let same_root = p.bin_dir.parent().is_some() && p.bin_dir.parent() == p.models_dir.parent();
+    let in_models = p.model_path.parent() == Some(p.models_dir.as_path());
+    if same_root && in_models {
+        if let (Some(dir), Some(file)) = (p.models_dir.file_name(), p.model_path.file_name()) {
+            let rel = std::path::Path::new("..").join(dir).join(file);
+            let rel = rel.to_string_lossy().into_owned();
+            if rel.is_ascii() {
+                return rel;
+            }
+        }
+    }
+    p.model_path.to_string_lossy().into_owned()
+}
+
 fn spawn(p: &LlmPaths, port: u16, gpu: bool) -> Result<Child, String> {
     let log = std::fs::File::create(&p.log_path).map_err(|e| e.to_string())?;
     let log_err = log.try_clone().map_err(|e| e.to_string())?;
     let mut cmd = Command::new(&p.server_exe);
-    cmd.args(server_args(&p.model_path.to_string_lossy(), port, gpu))
+    cmd.args(server_args(&model_arg(p), port, gpu))
         .current_dir(&p.bin_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
@@ -194,7 +218,58 @@ fn spawn(p: &LlmPaths, port: u16, gpu: bool) -> Result<Child, String> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    cmd.spawn().map_err(|e| e.to_string())
+    let child = cmd.spawn().map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    attach_kill_on_close_job(&child);
+    Ok(child)
+}
+
+/// Put the server into a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
+/// The job handle is never closed by us, so Windows closes it when Plot Flow
+/// exits for any reason (including a crash) and kills the server with it.
+#[cfg(windows)]
+fn attach_kill_on_close_job(child: &Child) {
+    use std::os::windows::io::AsRawHandle;
+    use std::sync::OnceLock;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    // Raw handle value; HANDLE itself is not Sync.
+    static JOB: OnceLock<Option<usize>> = OnceLock::new();
+    let job = *JOB.get_or_init(|| unsafe {
+        let job = match CreateJobObjectW(None, PCWSTR::null()) {
+            Ok(job) => job,
+            Err(e) => {
+                log::warn!("Local LLM: CreateJobObjectW failed: {e}");
+                return None;
+            }
+        };
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if let Err(e) = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION as *const std::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) {
+            log::warn!("Local LLM: SetInformationJobObject failed: {e}");
+            let _ = CloseHandle(job);
+            return None;
+        }
+        Some(job.0 as usize)
+    });
+    let Some(job) = job else {
+        return;
+    };
+    let process = HANDLE(child.as_raw_handle() as *mut std::ffi::c_void);
+    if let Err(e) = unsafe { AssignProcessToJobObject(HANDLE(job as *mut std::ffi::c_void), process) } {
+        log::warn!("Local LLM: could not attach the server to a job object: {e}");
+    }
 }
 
 /// Last few lines of the server log, for error messages.
@@ -337,6 +412,21 @@ mod tests {
         assert!(s.contains("-ngl 0"));
         assert!(s.contains("-dev none"));
         assert!(s.contains("--reasoning off"));
+    }
+
+    #[test]
+    fn model_is_passed_as_ascii_relative_path() {
+        let root = std::path::PathBuf::from("C:\\Users\\Игорь\\AppData\\Roaming\\plot\\llm");
+        let p = super::super::LlmPaths::new(root);
+        let arg = model_arg(&p);
+        assert!(arg.is_ascii());
+        assert!(arg.starts_with(".."));
+        assert!(arg.ends_with(super::super::MODEL.file_name));
+        // Resolved from bin\, it points at the real model file.
+        assert_eq!(
+            p.bin_dir.join(&arg).components().count(),
+            p.bin_dir.components().count() + 3
+        );
     }
 
     #[test]

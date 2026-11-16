@@ -1,7 +1,7 @@
 {
   "name": "plot-flow",
   "private": true,
-  "version": "1.4.0",
+  "version": "1.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -21,6 +21,7 @@
     "postinstall": "node -e \"process.exit(0)\""
   },
   "dependencies": {
+    "@fontsource-variable/onest": "^5.3.1",
     "@tailwindcss/vite": "^4.1.16",
     "@tauri-apps/api": "2.11.0",
     "@tauri-apps/plugin-autostart": "~2.5.1",

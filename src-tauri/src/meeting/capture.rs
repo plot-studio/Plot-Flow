@@ -92,6 +92,21 @@ pub fn open_source(
     }
 }
 
+/// Name of the current default output device — the device loopback capture
+/// follows. `None` when there is no output device or no loopback support.
+pub fn default_output_device_name() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        crate::audio_toolkit::get_cpal_host()
+            .default_output_device()
+            .and_then(|device| device.name().ok())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
 fn open_microphone(selected: Option<&str>) -> Result<CaptureStream, String> {
     let host = crate::audio_toolkit::get_cpal_host();
     let mut device = None;

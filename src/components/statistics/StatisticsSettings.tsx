@@ -20,7 +20,6 @@ function localToday() {
 
 export function StatisticsSettings() {
   const { t, i18n } = useTranslation();
-  const theme = "dark";
   const { data, loading, error, retry } = useUsageStatistics();
   const today = localToday();
   const [period, setPeriod] = useState<StatisticsPeriod>("day");
@@ -74,18 +73,17 @@ export function StatisticsSettings() {
   );
 
   return (
-    <div className="max-w-3xl w-full mx-auto space-y-6">
-      <h1 className="text-lg font-semibold">{t("statistics.title")}</h1>
+    <div className="mx-auto w-full max-w-[720px] space-y-5">
+      <header className="px-1">
+        <h1 className="pf-title">{t("statistics.title")}</h1>
+      </header>
       {loading && (
-        <p role="status" className="text-sm text-mid-gray">
+        <p role="status" className="text-sm text-text-muted">
           {t("statistics.loading")}
         </p>
       )}
       {error && (
-        <div
-          role="alert"
-          className="px-4 py-2 text-sm border border-mid-gray/20 rounded-lg"
-        >
+        <div role="alert" className="pf-card px-4 py-3 text-sm">
           <p>{t("statistics.error")}</p>
           <Button
             type="button"
@@ -100,26 +98,19 @@ export function StatisticsSettings() {
       )}
       {data && (
         <>
-          <section
-            aria-label={t("statistics.totals")}
-            className={`rounded-3xl p-3.5 sm:p-4 border ${theme === "dark" ? "bg-[#141414] text-white border-white/[0.08] shadow-[0_4px_20px_rgba(0,0,0,0.3)]" : "bg-white border-neutral-200 text-black shadow-[0_4px_20px_rgba(0,0,0,0.04)]"}`}
-          >
-            <dl className="flex flex-wrap gap-6 px-4 py-3">
-              <div>
-                <dt className="text-xs text-mid-gray">
-                  {t("statistics.totalWords")}
-                </dt>
-                <dd className="text-xl sm:text-2xl font-bold tracking-tight tabular-nums font-sans">
+          <section aria-label={t("statistics.totals")} className="pf-card">
+            <dl className="grid grid-cols-3">
+              <div className="px-5 py-4">
+                <dt className="pf-label">{t("statistics.totalWords")}</dt>
+                <dd className="mt-1 text-[24px] leading-none font-semibold tracking-[-0.03em] tabular-nums">
                   {data.total_words.toLocaleString(i18n.language)}
                 </dd>
               </div>
-              <div>
-                <dt className="text-xs text-mid-gray">
-                  {t("statistics.totalRecords")}
-                </dt>
+              <div className="border-s border-text/[0.07] px-5 py-4">
+                <dt className="pf-label">{t("statistics.totalRecords")}</dt>
                 <dd
                   data-statistic="records"
-                  className="text-xl sm:text-2xl font-bold tracking-tight tabular-nums font-sans"
+                  className="mt-1 text-[24px] leading-none font-semibold tracking-[-0.03em] tabular-nums"
                 >
                   {data.records_complete === true
                     ? (data.total_records ?? 0).toLocaleString(i18n.language)
@@ -128,35 +119,17 @@ export function StatisticsSettings() {
                       : "—"}
                 </dd>
               </div>
-              <div>
-                <dt className="text-xs text-mid-gray">
-                  {t("statistics.totalAudio")}
-                </dt>
-                <dd className="text-xl sm:text-2xl font-bold tracking-tight tabular-nums font-sans">
+              <div className="border-s border-text/[0.07] px-5 py-4">
+                <dt className="pf-label">{t("statistics.totalAudio")}</dt>
+                <dd className="mt-1 text-[24px] leading-none font-semibold tracking-[-0.03em] tabular-nums">
                   {formatAudioDuration(data.total_audio_ms)}
                 </dd>
               </div>
             </dl>
           </section>
-          <div className="text-xs text-mid-gray space-y-1">
-            <p>
-              {t("statistics.trackingSince", {
-                date: formatPointDate(
-                  data.tracking_started_day,
-                  "day",
-                  i18n.language,
-                ),
-              })}
-            </p>
-            <p>{t("statistics.localNote")}</p>
-            <p>{t("statistics.audioNote")}</p>
-            {data.records_complete !== true && (
-              <p>{t("statistics.recordsNote")}</p>
-            )}
-          </div>
           <div
             data-statistics-cards
-            className="grid grid-cols-2 gap-6 sm:gap-7 text-white"
+            className="grid grid-cols-2 gap-4 text-text"
           >
             <MonoActivityHeatmap
               stats={data}
@@ -188,6 +161,18 @@ export function StatisticsSettings() {
               years={years}
             />
           </div>
+          <p className="px-1 text-[11.5px] leading-relaxed text-text-muted/80">
+            {t("statistics.trackingSince", {
+              date: formatPointDate(
+                data.tracking_started_day,
+                "day",
+                i18n.language,
+              ),
+            })}{" "}
+            · {t("statistics.audioNote")}
+            {data.records_complete !== true &&
+              ` · ${t("statistics.recordsNote")}`}
+          </p>
         </>
       )}
     </div>

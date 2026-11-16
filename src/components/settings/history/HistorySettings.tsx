@@ -1,7 +1,22 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { Check, Copy, FolderOpen, RotateCcw, Star, Trash2 } from "lucide-react";
+import {
+  Check,
+  Copy,
+  FolderOpen,
+  Loader2,
+  RotateCcw,
+  Star,
+  Trash2,
+} from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
@@ -11,9 +26,8 @@ import {
   type HistoryUpdatePayload,
 } from "@/bindings";
 import { useOsType } from "@/hooks/useOsType";
-import { formatDateTime } from "@/utils/dateFormat";
+import { PRESS_SCALE, SPRING, SPRING_SNAPPY } from "@/lib/motion";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
-import { Button } from "../../ui/Button";
 
 const IconButton: React.FC<{
   onClick: () => void;
@@ -22,45 +36,40 @@ const IconButton: React.FC<{
   active?: boolean;
   children: React.ReactNode;
 }> = ({ onClick, title, disabled, active, children }) => (
-  <button
+  <motion.button
+    type="button"
     onClick={onClick}
     disabled={disabled}
-    className={`p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed disabled:text-text/20 ${
+    whileTap={disabled ? undefined : { scale: 0.9 }}
+    transition={SPRING_SNAPPY}
+    className={`flex h-7 w-7 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 disabled:cursor-not-allowed disabled:text-text/20 ${
       active
-        ? "text-logo-primary hover:text-logo-primary/80"
-        : "text-text/50 hover:text-logo-primary"
+        ? "text-logo-primary hover:bg-logo-primary/10"
+        : "text-text-muted hover:bg-text/[0.07] hover:text-text"
     }`}
     title={title}
+    aria-label={title}
   >
     {children}
-  </button>
+  </motion.button>
 );
 
 const PAGE_SIZE = 30;
 
-interface OpenRecordingsButtonProps {
-  onClick: () => void;
-  label: string;
+const dayKey = (seconds: number) => {
+  const d = new Date(seconds * 1000);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+};
+
+interface HistorySettingsProps {
+  /** Rendered at the right of the page header (e.g. live status chips). */
+  headerAccessory?: React.ReactNode;
 }
 
-const OpenRecordingsButton: React.FC<OpenRecordingsButtonProps> = ({
-  onClick,
-  label,
-}) => (
-  <Button
-    onClick={onClick}
-    variant="secondary"
-    size="sm"
-    className="flex items-center gap-2"
-    title={label}
-  >
-    <FolderOpen className="w-4 h-4" />
-    <span>{label}</span>
-  </Button>
-);
-
-export const HistorySettings: React.FC = () => {
-  const { t } = useTranslation();
+export const HistorySettings: React.FC<HistorySettingsProps> = ({
+  headerAccessory,
+}) => {
+  const { t, i18n } = useTranslation();
   const osType = useOsType();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -234,63 +243,128 @@ export const HistorySettings: React.FC = () => {
     }
   };
 
+  // Group consecutive entries by calendar day (entries arrive newest first).
+  const groups = useMemo(() => {
+    const out: { key: string; label: string; items: HistoryEntry[] }[] = [];
+    const now = new Date();
+    const todayKey = dayKey(now.getTime() / 1000);
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    const yesterdayKey = dayKey(yesterday.getTime() / 1000);
+    for (const entry of entries) {
+      const key = dayKey(entry.timestamp);
+      let group = out[out.length - 1];
+      if (!group || group.key !== key) {
+        const d = new Date(entry.timestamp * 1000);
+        const label =
+          key === todayKey
+            ? t("home.today")
+            : key === yesterdayKey
+              ? t("home.yesterday")
+              : new Intl.DateTimeFormat(i18n.language, {
+                  day: "numeric",
+                  month: "long",
+                  year:
+                    d.getFullYear() === now.getFullYear()
+                      ? undefined
+                      : "numeric",
+                }).format(d);
+        group = { key, label, items: [] };
+        out.push(group);
+      }
+      group.items.push(entry);
+    }
+    return out;
+  }, [entries, i18n.language, t]);
+
   let content: React.ReactNode;
 
   if (loading) {
     content = (
-      <div className="px-4 py-3 text-center text-text/60">
+      <div className="flex items-center gap-2 px-1 py-6 text-[13px] text-text-muted">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
         {t("settings.history.loading")}
       </div>
     );
   } else if (entries.length === 0) {
     content = (
-      <div className="px-4 py-3 text-center text-text/60">
-        {t("settings.history.empty")}
-      </div>
+      <p className="px-1 py-10 text-[13px] text-text-muted">
+        {t("home.empty")}
+      </p>
     );
   } else {
     content = (
-      <>
-        <AudioPlayerGroup>
-          <div className="divide-y divide-mid-gray/20">
-            {entries.map((entry) => (
-              <HistoryEntryComponent
-                key={entry.id}
-                entry={entry}
-                onToggleSaved={() => toggleSaved(entry.id)}
-                onCopyText={() => copyToClipboard(entry.transcription_text)}
-                getAudioUrl={getAudioUrl}
-                deleteAudio={deleteAudioEntry}
-                retryTranscription={retryHistoryEntry}
-              />
+      <AudioPlayerGroup>
+        <div className="flex flex-col gap-6">
+          <AnimatePresence initial={false}>
+            {groups.map((group) => (
+              <motion.section
+                key={group.key}
+                layout="position"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={SPRING}
+                className="flex flex-col gap-2"
+              >
+                <h3 className="pf-label px-1">{group.label}</h3>
+                <div className="pf-card pf-rows overflow-hidden">
+                  <AnimatePresence initial={false}>
+                    {group.items.map((entry) => (
+                      <motion.div
+                        key={entry.id}
+                        layout="position"
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={SPRING}
+                        className="overflow-hidden"
+                      >
+                        <HistoryEntryComponent
+                          entry={entry}
+                          onToggleSaved={() => toggleSaved(entry.id)}
+                          onCopyText={() =>
+                            copyToClipboard(entry.transcription_text)
+                          }
+                          getAudioUrl={getAudioUrl}
+                          deleteAudio={deleteAudioEntry}
+                          retryTranscription={retryHistoryEntry}
+                        />
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              </motion.section>
             ))}
-          </div>
-        </AudioPlayerGroup>
+          </AnimatePresence>
+        </div>
         {/* Sentinel for infinite scroll */}
         <div ref={sentinelRef} className="h-1" />
-      </>
+      </AudioPlayerGroup>
     );
   }
 
   return (
-    <div className="max-w-3xl w-full mx-auto space-y-6">
-      <div className="space-y-2">
-        <div className="px-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-xs font-medium text-mid-gray uppercase tracking-wide">
-              {t("settings.history.title")}
-            </h2>
-          </div>
-          <OpenRecordingsButton
+    <section className="w-full">
+      <header className="mb-5 flex items-center justify-between gap-4 px-1">
+        <h1 className="pf-title">{t("home.title")}</h1>
+        <div className="flex items-center gap-1.5">
+          {headerAccessory}
+          <motion.button
+            type="button"
             onClick={openRecordingsFolder}
-            label={t("settings.history.openFolder")}
-          />
+            whileTap={{ scale: PRESS_SCALE }}
+            transition={SPRING_SNAPPY}
+            title={t("settings.history.openFolder")}
+            aria-label={t("settings.history.openFolder")}
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-text-muted transition-colors duration-150 hover:bg-text/[0.07] hover:text-text"
+          >
+            <FolderOpen className="h-4 w-4" strokeWidth={1.8} />
+          </motion.button>
         </div>
-        <div className="bg-background border border-mid-gray/20 rounded-lg overflow-visible">
-          {content}
-        </div>
-      </div>
-    </div>
+      </header>
+      {content}
+    </section>
   );
 };
 
@@ -353,72 +427,20 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
     }
   };
 
-  const formattedDate = formatDateTime(String(entry.timestamp), i18n.language);
+  const time = new Intl.DateTimeFormat(i18n.language, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(entry.timestamp * 1000));
 
   return (
-    <div className="px-4 py-2 pb-5 flex flex-col gap-3">
-      <div className="flex justify-between items-center">
-        <p className="text-sm font-medium">{formattedDate}</p>
-        <div className="flex items-center">
-          <IconButton
-            onClick={handleCopyText}
-            disabled={!hasTranscription || retrying}
-            title={t("settings.history.copyToClipboard")}
-          >
-            {showCopied ? (
-              <Check width={16} height={16} />
-            ) : (
-              <Copy width={16} height={16} />
-            )}
-          </IconButton>
-          <IconButton
-            onClick={onToggleSaved}
-            disabled={retrying}
-            active={entry.saved}
-            title={
-              entry.saved
-                ? t("settings.history.unsave")
-                : t("settings.history.save")
-            }
-          >
-            <Star
-              width={16}
-              height={16}
-              fill={entry.saved ? "currentColor" : "none"}
-            />
-          </IconButton>
-          <IconButton
-            onClick={handleRetranscribe}
-            disabled={retrying}
-            title={t("settings.history.retranscribe")}
-          >
-            <RotateCcw
-              width={16}
-              height={16}
-              style={
-                retrying
-                  ? { animation: "spin 1s linear infinite reverse" }
-                  : undefined
-              }
-            />
-          </IconButton>
-          <IconButton
-            onClick={handleDeleteEntry}
-            disabled={retrying}
-            title={t("settings.history.delete")}
-          >
-            <Trash2 width={16} height={16} />
-          </IconButton>
-        </div>
-      </div>
-
+    <div className="group/row flex flex-col gap-2.5 px-4 pt-3.5 pb-3 transition-colors duration-150 hover:bg-text/[0.018]">
       <p
-        className={`italic text-sm pb-2 ${
+        className={`text-[14px] leading-[1.6] tracking-[-0.006em] ${
           retrying
             ? ""
             : hasTranscription
-              ? "text-text/90 select-text cursor-text whitespace-pre-wrap break-words"
-              : "text-text/40"
+              ? "cursor-text whitespace-pre-wrap break-words text-text select-text"
+              : "text-text-muted"
         }`}
         style={
           retrying
@@ -441,7 +463,74 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
             : t("settings.history.transcriptionFailed")}
       </p>
 
-      <AudioPlayer onLoadRequest={handleLoadAudio} className="w-full" />
+      <div className="flex h-7 items-center gap-3">
+        <span className="flex shrink-0 items-center gap-1.5 text-[12px] text-text-muted tabular-nums">
+          {time}
+          {entry.saved && (
+            <Star
+              className="h-3 w-3 text-logo-primary"
+              fill="currentColor"
+              strokeWidth={0}
+              aria-hidden="true"
+            />
+          )}
+        </span>
+        <AudioPlayer
+          onLoadRequest={handleLoadAudio}
+          className="max-w-[240px] flex-1"
+        />
+        <div className="ms-auto flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/row:opacity-100 focus-within:opacity-100">
+          <IconButton
+            onClick={handleCopyText}
+            disabled={!hasTranscription || retrying}
+            title={t("settings.history.copyToClipboard")}
+          >
+            {showCopied ? (
+              <Check width={15} height={15} />
+            ) : (
+              <Copy width={15} height={15} />
+            )}
+          </IconButton>
+          <IconButton
+            onClick={onToggleSaved}
+            disabled={retrying}
+            active={entry.saved}
+            title={
+              entry.saved
+                ? t("settings.history.unsave")
+                : t("settings.history.save")
+            }
+          >
+            <Star
+              width={15}
+              height={15}
+              fill={entry.saved ? "currentColor" : "none"}
+            />
+          </IconButton>
+          <IconButton
+            onClick={handleRetranscribe}
+            disabled={retrying}
+            title={t("settings.history.retranscribe")}
+          >
+            <RotateCcw
+              width={15}
+              height={15}
+              style={
+                retrying
+                  ? { animation: "spin 1s linear infinite reverse" }
+                  : undefined
+              }
+            />
+          </IconButton>
+          <IconButton
+            onClick={handleDeleteEntry}
+            disabled={retrying}
+            title={t("settings.history.delete")}
+          >
+            <Trash2 width={15} height={15} />
+          </IconButton>
+        </div>
+      </div>
     </div>
   );
 };

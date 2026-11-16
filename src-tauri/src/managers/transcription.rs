@@ -39,6 +39,230 @@ use transcribe_rs::{
 
 const STREAM_PERF_LOG_INTERVAL: Duration = Duration::from_secs(5);
 const STREAM_FINALIZE_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a caller waits for an engine another caller is using.
+const ENGINE_CHECKOUT_TIMEOUT: Duration = Duration::from_secs(120);
+/// Re-check period while waiting for the engine (the streaming lease is
+/// released without a notification).
+const ENGINE_WAIT_SLICE: Duration = Duration::from_millis(250);
+
+/* ───────────── Engine checkout (one engine, many callers) ───────────── */
+
+/// Outcome of [`checkout_engine_slot`].
+#[derive(Debug, PartialEq)]
+enum EngineCheckout<T> {
+    /// The engine, now owned by the caller; `busy` is set.
+    Engine(T),
+    /// No engine in the slot and nobody is using one: the model is not loaded.
+    NotLoaded,
+    /// Somebody kept the engine for longer than the timeout.
+    TimedOut,
+}
+
+/// Take the engine out of `slot`, waiting (up to `timeout`) while it is
+/// checked out (`busy`) or leased to the streaming worker (`lease != 0`).
+/// `busy` is only changed while `slot`'s mutex is held; `cv` is notified
+/// whenever an engine goes back or a checkout ends.
+fn checkout_engine_slot<T>(
+    slot: &Mutex<Option<T>>,
+    cv: &Condvar,
+    busy: &AtomicBool,
+    lease: &AtomicU64,
+    timeout: Duration,
+) -> EngineCheckout<T> {
+    let deadline = Instant::now() + timeout;
+    let mut guard = slot.lock().unwrap_or_else(|p| p.into_inner());
+    loop {
+        if let Some(engine) = guard.take() {
+            busy.store(true, Ordering::Release);
+            return EngineCheckout::Engine(engine);
+        }
+        let in_use = busy.load(Ordering::Acquire) || lease.load(Ordering::Acquire) != 0;
+        if !in_use {
+            return EngineCheckout::NotLoaded;
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return EngineCheckout::TimedOut;
+        }
+        let wait = (deadline - now).min(ENGINE_WAIT_SLICE);
+        guard = match cv.wait_timeout(guard, wait) {
+            Ok((g, _)) => g,
+            Err(p) => p.into_inner().0,
+        };
+    }
+}
+
+/// Put `engine` (if any) back into `slot`; with `ends_checkout` also clear
+/// `busy` in the same critical section. Always wakes waiters.
+fn release_engine_slot<T>(
+    slot: &Mutex<Option<T>>,
+    cv: &Condvar,
+    busy: &AtomicBool,
+    engine: Option<T>,
+    ends_checkout: bool,
+) {
+    {
+        let mut guard = slot.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(engine) = engine {
+            *guard = Some(engine);
+        }
+        if ends_checkout {
+            busy.store(false, Ordering::Release);
+        }
+    }
+    cv.notify_all();
+}
+
+/// Lock `slot` once no batch checkout is in progress (or `timeout` passed).
+fn wait_while_busy<'a, T>(
+    slot: &'a Mutex<Option<T>>,
+    cv: &Condvar,
+    busy: &AtomicBool,
+    timeout: Duration,
+) -> MutexGuard<'a, Option<T>> {
+    let deadline = Instant::now() + timeout;
+    let mut guard = slot.lock().unwrap_or_else(|p| p.into_inner());
+    while busy.load(Ordering::Acquire) {
+        let now = Instant::now();
+        if now >= deadline {
+            warn!("Engine still busy after {timeout:?}; proceeding anyway");
+            break;
+        }
+        let wait = (deadline - now).min(ENGINE_WAIT_SLICE);
+        guard = match cv.wait_timeout(guard, wait) {
+            Ok((g, _)) => g,
+            Err(p) => p.into_inner().0,
+        };
+    }
+    guard
+}
+
+/// Clears the batch checkout's busy flag on drop unless disarmed (the engine
+/// was returned through `return_engine(.., true)`).
+struct EngineBusyGuard<'a> {
+    manager: &'a TranscriptionManager,
+    armed: bool,
+}
+
+impl Drop for EngineBusyGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.manager.clear_engine_busy();
+        }
+    }
+}
+
+#[cfg(test)]
+mod engine_checkout_tests {
+    use super::*;
+
+    struct Slot {
+        engine: Mutex<Option<u32>>,
+        cv: Condvar,
+        busy: AtomicBool,
+        lease: AtomicU64,
+    }
+
+    fn slot(engine: Option<u32>) -> Arc<Slot> {
+        Arc::new(Slot {
+            engine: Mutex::new(engine),
+            cv: Condvar::new(),
+            busy: AtomicBool::new(false),
+            lease: AtomicU64::new(0),
+        })
+    }
+
+    fn checkout(s: &Slot, timeout: Duration) -> EngineCheckout<u32> {
+        checkout_engine_slot(&s.engine, &s.cv, &s.busy, &s.lease, timeout)
+    }
+
+    #[test]
+    fn checkout_takes_engine_and_marks_busy() {
+        let s = slot(Some(7));
+        assert_eq!(checkout(&s, Duration::ZERO), EngineCheckout::Engine(7));
+        assert!(s.busy.load(Ordering::Acquire));
+        release_engine_slot(&s.engine, &s.cv, &s.busy, Some(7), true);
+        assert!(!s.busy.load(Ordering::Acquire));
+        assert_eq!(*s.engine.lock().unwrap(), Some(7));
+    }
+
+    #[test]
+    fn empty_idle_slot_is_not_loaded() {
+        let s = slot(None);
+        assert_eq!(checkout(&s, Duration::from_secs(5)), EngineCheckout::NotLoaded);
+    }
+
+    #[test]
+    fn busy_slot_times_out_instead_of_reporting_not_loaded() {
+        let s = slot(Some(1));
+        let _ = checkout(&s, Duration::ZERO);
+        assert_eq!(
+            checkout(&s, Duration::from_millis(50)),
+            EngineCheckout::TimedOut
+        );
+        s.busy.store(false, Ordering::Release);
+        s.lease.store(3, Ordering::Release);
+        assert_eq!(
+            checkout(&s, Duration::from_millis(50)),
+            EngineCheckout::TimedOut
+        );
+    }
+
+    #[test]
+    fn second_caller_waits_for_returned_engine() {
+        let s = slot(Some(5));
+        assert_eq!(checkout(&s, Duration::ZERO), EngineCheckout::Engine(5));
+        let waiter = {
+            let s = Arc::clone(&s);
+            thread::spawn(move || checkout(&s, Duration::from_secs(10)))
+        };
+        thread::sleep(Duration::from_millis(100));
+        release_engine_slot(&s.engine, &s.cv, &s.busy, Some(5), true);
+        assert_eq!(waiter.join().unwrap(), EngineCheckout::Engine(5));
+        // The waiter now owns it: busy again, slot empty.
+        assert!(s.busy.load(Ordering::Acquire));
+        assert!(s.engine.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn dropped_engine_wakes_waiter_with_not_loaded() {
+        let s = slot(Some(5));
+        let _ = checkout(&s, Duration::ZERO);
+        let waiter = {
+            let s = Arc::clone(&s);
+            thread::spawn(move || checkout(&s, Duration::from_secs(10)))
+        };
+        thread::sleep(Duration::from_millis(50));
+        release_engine_slot(&s.engine, &s.cv, &s.busy, None, true);
+        assert_eq!(waiter.join().unwrap(), EngineCheckout::NotLoaded);
+    }
+
+    #[test]
+    fn stream_return_does_not_clear_batch_checkout() {
+        let s = slot(Some(1));
+        let _ = checkout(&s, Duration::ZERO);
+        release_engine_slot(&s.engine, &s.cv, &s.busy, None::<u32>, false);
+        assert!(s.busy.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn loader_waits_for_checkout_to_end() {
+        let s = slot(Some(1));
+        let _ = checkout(&s, Duration::ZERO);
+        let releaser = {
+            let s = Arc::clone(&s);
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(100));
+                release_engine_slot(&s.engine, &s.cv, &s.busy, Some(1), true);
+            })
+        };
+        let guard = wait_while_busy(&s.engine, &s.cv, &s.busy, Duration::from_secs(10));
+        assert_eq!(*guard, Some(1));
+        assert!(!s.busy.load(Ordering::Acquire));
+        drop(guard);
+        releaser.join().unwrap();
+    }
+}
 
 fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
@@ -302,6 +526,12 @@ pub struct TranscriptionManager {
     /// `is_model_loaded()` consults this so the model still reports "loaded"
     /// while the worker holds it.
     active_engine_lease: Arc<AtomicU64>,
+    /// True while a batch `transcribe()` call has the engine checked out of
+    /// `engine`. Only changed while the `engine` mutex is held.
+    engine_busy: Arc<AtomicBool>,
+    /// Paired with the `engine` mutex: notified whenever the engine goes back
+    /// into the slot or a checkout ends, so waiting callers can take it.
+    engine_available: Arc<Condvar>,
     /// The running live-insert worker, if any: its result channel.
     live_insert: Arc<Mutex<Option<mpsc::Receiver<String>>>>,
     /// Set to abandon the live-insert worker without a final flush (cancel).
@@ -326,6 +556,8 @@ impl TranscriptionManager {
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
             active_engine_lease: Arc::new(AtomicU64::new(0)),
+            engine_busy: Arc::new(AtomicBool::new(false)),
+            engine_available: Arc::new(Condvar::new()),
             live_insert: Arc::new(Mutex::new(None)),
             live_insert_cancel: Arc::new(AtomicBool::new(false)),
         };
@@ -357,9 +589,13 @@ impl TranscriptionManager {
 
                     // While recording, keep the idle timer fresh so the
                     // model is never unloaded mid-session.
+                    // A running meeting or an engine in use counts as
+                    // recording too: unloading would force a reload (or a
+                    // second model) in the middle of the meeting.
                     let is_recording = app_handle_cloned
                         .try_state::<Arc<AudioRecordingManager>>()
-                        .is_some_and(|a| a.is_recording());
+                        .is_some_and(|a| a.is_recording())
+                        || manager_cloned.is_in_use();
                     if is_recording {
                         manager_cloned.touch_activity();
                         continue;
@@ -413,9 +649,59 @@ impl TranscriptionManager {
     }
 
     pub fn is_model_loaded(&self) -> bool {
-        // The engine may be leased out to the streaming worker (taken out of
-        // the mutex). It's still loaded, just in use, so report true.
-        self.lock_engine().is_some() || self.active_engine_lease.load(Ordering::Acquire) != 0
+        // The engine may be leased out to the streaming worker or checked out
+        // by a batch transcription (taken out of the mutex). It's still
+        // loaded, just in use, so report true.
+        self.lock_engine().is_some() || self.is_engine_checked_out()
+    }
+
+    /// True while the engine is out of its slot (batch checkout or stream lease).
+    fn is_engine_checked_out(&self) -> bool {
+        self.engine_busy.load(Ordering::Acquire)
+            || self.active_engine_lease.load(Ordering::Acquire) != 0
+    }
+
+    /// True while unloading the model would disturb work: the engine is in
+    /// use, or a meeting is being recorded/finalized (it transcribes segments
+    /// at irregular intervals and must not lose or reload the model).
+    pub fn is_in_use(&self) -> bool {
+        if self.is_engine_checked_out() {
+            return true;
+        }
+        self.app_handle
+            .try_state::<Arc<crate::meeting::MeetingManager>>()
+            .is_some_and(|m| m.active_meeting_id().is_some())
+    }
+
+    /// Take the engine out of its slot for exclusive use, waiting up to
+    /// `timeout` while another caller has it. `Ok(None)` means no model is
+    /// loaded (and nobody is using one).
+    fn checkout_engine(&self, timeout: Duration) -> Result<Option<LoadedEngine>> {
+        match checkout_engine_slot(
+            &*self.engine,
+            &*self.engine_available,
+            &*self.engine_busy,
+            &*self.active_engine_lease,
+            timeout,
+        ) {
+            EngineCheckout::Engine(engine) => Ok(Some(engine)),
+            EngineCheckout::NotLoaded => Ok(None),
+            EngineCheckout::TimedOut => Err(anyhow::anyhow!(
+                "The transcription engine stayed busy for {}s",
+                timeout.as_secs()
+            )),
+        }
+    }
+
+    /// End a batch checkout without returning an engine (it was dropped).
+    fn clear_engine_busy(&self) {
+        release_engine_slot(
+            &*self.engine,
+            &*self.engine_available,
+            &*self.engine_busy,
+            None::<LoadedEngine>,
+            true,
+        );
     }
 
     /// Accelerator changes should not disturb the current transcription. Mark
@@ -492,6 +778,10 @@ impl TranscriptionManager {
         if settings.model_unload_timeout == ModelUnloadTimeout::Immediately
             && self.is_model_loaded()
         {
+            if self.is_in_use() {
+                debug!("Keeping model loaded after {context}: engine or meeting in use");
+                return;
+            }
             info!("Immediately unloading model after {}", context);
             if let Err(e) = self.unload_model() {
                 warn!("Failed to immediately unload model: {}", e);
@@ -575,8 +865,17 @@ impl TranscriptionManager {
         // frees the previous native context first — avoids holding two models at
         // once (peak memory on large GGUFs). Clear the id too: if the new load
         // fails, status should read "no loaded model", not the dropped engine.
+        //
+        // A batch transcription that has the engine checked out finishes
+        // first: dropping the id now would make it discard the engine on
+        // return, and another caller would load a second copy meanwhile.
         {
-            let mut engine = self.lock_engine();
+            let mut engine = wait_while_busy(
+                &*self.engine,
+                &*self.engine_available,
+                &*self.engine_busy,
+                ENGINE_CHECKOUT_TIMEOUT,
+            );
             *engine = None;
         }
         {
@@ -747,6 +1046,8 @@ impl TranscriptionManager {
             let mut current_model = self.current_model_id.lock().unwrap();
             *current_model = Some(model_id.to_string());
         }
+        // Wake callers waiting for an engine.
+        self.engine_available.notify_all();
 
         // Reset idle timer so the watcher doesn't immediately unload a just-loaded model
         self.touch_activity();
@@ -950,7 +1251,7 @@ impl TranscriptionManager {
         };
 
         if !supports_streaming {
-            self.return_engine(engine, &model_id);
+            self.return_engine(engine, &model_id, false);
             self.router.clear();
             drain_until_finalize(rx);
             return;
@@ -1108,12 +1409,12 @@ impl TranscriptionManager {
             // failed); drain so the finalize handshake still completes and the
             // caller falls back to batch transcription. Return the engine first
             // so the fallback can immediately use it.
-            self.return_engine(engine, &model_id);
+            self.return_engine(engine, &model_id, false);
             drain_until_finalize(rx);
             return;
         }
 
-        self.return_engine(engine, &model_id);
+        self.return_engine(engine, &model_id, false);
         if let (Some(reply), Some(result)) = (finalize_reply, finalize_result) {
             let _ = reply.send(result);
         }
@@ -1123,18 +1424,31 @@ impl TranscriptionManager {
 
     /// Return the leased engine to the mutex, unless the model was switched or
     /// unloaded during transcription (in which case the stale engine is dropped).
-    fn return_engine(&self, engine: LoadedEngine, expected_model_id: &str) {
+    ///
+    /// `ends_checkout` is true for a batch `transcribe()` checkout: the busy
+    /// flag is cleared in the same critical section that puts the engine
+    /// back, so a waiting caller can never observe "free slot, still busy"
+    /// or have its own checkout cleared by us. Waiters are always woken.
+    fn return_engine(&self, engine: LoadedEngine, expected_model_id: &str, ends_checkout: bool) {
         let still_current =
             self.current_model_id.lock().unwrap().as_deref() == Some(expected_model_id);
-        if still_current {
-            *self.lock_engine() = Some(engine);
+        let engine = if still_current {
+            Some(engine)
         } else {
             info!(
                 "Model changed/unloaded during transcription; dropping stale engine (was '{}')",
                 expected_model_id
             );
-            // `engine` drops here, freeing its resources.
-        }
+            drop(engine); // frees its resources outside the engine lock
+            None
+        };
+        release_engine_slot(
+            &*self.engine,
+            &*self.engine_available,
+            &*self.engine_busy,
+            engine,
+            ends_checkout,
+        );
     }
 
     /// Flush the active stream and return its final, post-filtered text.
@@ -1291,19 +1605,27 @@ impl TranscriptionManager {
         }
         let audio = audio;
 
-        // Check if model is loaded, if not try to load it
+        // If the model is loading, wait for it to complete.
         {
-            // If the model is loading, wait for it to complete.
             let mut is_loading = self.is_loading.lock().unwrap();
             while *is_loading {
                 is_loading = self.loading_condvar.wait(is_loading).unwrap();
             }
-
-            let engine_guard = self.lock_engine();
-            if engine_guard.is_none() {
-                return Err(anyhow::anyhow!("Model is not loaded for transcription."));
-            }
         }
+
+        // Check the engine out of its slot. Another caller (dictation, a
+        // meeting segment, the live preview) may be using it right now: wait
+        // for it instead of failing with "not loaded".
+        let checked_out = match self.checkout_engine(ENGINE_CHECKOUT_TIMEOUT)? {
+            Some(engine) => engine,
+            None => return Err(anyhow::anyhow!("Model is not loaded for transcription.")),
+        };
+        // Clears the busy flag if we leave without returning the engine
+        // (engine panic, unexpected early return).
+        let mut busy_guard = EngineBusyGuard {
+            manager: self,
+            armed: true,
+        };
 
         // Get current settings for configuration
         let settings = get_settings(&self.app_handle);
@@ -1351,22 +1673,11 @@ impl TranscriptionManager {
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
         // which would make the app hang indefinitely on subsequent operations.
         let (result, output_language, model_languages) = {
-            let mut engine_guard = self.lock_engine();
-
-            // Take the engine out so we own it during transcription.
-            // If the engine panics, we simply don't put it back (effectively unloading it)
-            // instead of poisoning the mutex.
-            let mut engine = match engine_guard.take() {
-                Some(e) => e,
-                None => {
-                    return Err(anyhow::anyhow!(
-                        "Model failed to load after auto-load attempt. Please check your model settings."
-                    ));
-                }
-            };
-
-            // Release the lock before transcribing — no mutex held during the engine call
-            drop(engine_guard);
+            // We own the engine during transcription (checked out above, no
+            // mutex held during the engine call). If the engine panics, we
+            // simply don't put it back (effectively unloading it) instead of
+            // poisoning the mutex.
+            let mut engine = checked_out;
 
             // Probe live transcribe-cpp capabilities once (cheap GGUF-metadata
             // reads); the loaded session is the source of truth, not the
@@ -1540,7 +1851,8 @@ impl TranscriptionManager {
                 Ok(inner_result) => {
                     // Success or normal error: return the engine unless a model
                     // switch/unload invalidated it while it was in use.
-                    self.return_engine(engine, &active_model);
+                    busy_guard.armed = false;
+                    self.return_engine(engine, &active_model, true);
                     inner_result?
                 }
                 Err(panic_payload) => {

@@ -1,53 +1,53 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChartNoAxesCombined, History, Mic, Users } from "lucide-react";
+import { motion } from "motion/react";
+import { getVersion } from "@tauri-apps/api/app";
+import {
+  ChartNoAxesCombined,
+  House,
+  Settings2,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 
-import { SettingsPage, StatisticsSettings, HistorySettings } from "./settings";
+import { SettingsPage, StatisticsSettings } from "./settings";
 import { MeetingPage } from "./meeting";
+import { HomePage } from "./home/HomePage";
+import type { AppSection } from "@/stores/navigationStore";
+import { PRESS_SCALE, SPRING_SNAPPY } from "@/lib/motion";
 
-export type SidebarSection = keyof typeof SECTIONS_CONFIG;
-
-interface IconProps {
-  width?: number | string;
-  height?: number | string;
-  size?: number | string;
-  className?: string;
-  [key: string]: any;
-}
+export type SidebarSection = AppSection;
 
 interface SectionConfig {
   labelKey: string;
-  icon: React.ComponentType<IconProps>;
+  icon: LucideIcon;
   component: React.ComponentType;
-  enabled: (settings: any) => boolean;
 }
 
-export const SECTIONS_CONFIG = {
-  settings: {
-    labelKey: "sidebar.settings",
-    icon: Mic,
-    component: SettingsPage,
-    enabled: () => true,
+export const SECTIONS_CONFIG: Record<AppSection, SectionConfig> = {
+  home: {
+    labelKey: "sidebar.home",
+    icon: House,
+    component: HomePage,
   },
   meeting: {
     labelKey: "sidebar.meeting",
     icon: Users,
     component: MeetingPage,
-    enabled: () => true,
-  },
-  history: {
-    labelKey: "sidebar.history",
-    icon: History,
-    component: HistorySettings,
-    enabled: () => true,
   },
   statistics: {
     labelKey: "sidebar.statistics",
     icon: ChartNoAxesCombined,
     component: StatisticsSettings,
-    enabled: () => true,
   },
-} as const satisfies Record<string, SectionConfig>;
+  settings: {
+    labelKey: "sidebar.settings",
+    icon: Settings2,
+    component: SettingsPage,
+  },
+};
+
+const ORDER: AppSection[] = ["home", "meeting", "statistics", "settings"];
 
 interface SidebarProps {
   activeSection: SidebarSection;
@@ -59,51 +59,65 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSectionChange,
 }) => {
   const { t } = useTranslation();
+  const [version, setVersion] = useState("");
 
-  const availableSections = Object.entries(SECTIONS_CONFIG).map(
-    ([id, config]) => ({ id: id as SidebarSection, ...config }),
-  );
+  useEffect(() => {
+    getVersion()
+      .then(setVersion)
+      .catch(() => setVersion(""));
+  }, []);
 
   return (
-    <div className="flex flex-col w-40 h-full border-e border-mid-gray/20 items-center px-2">
-      <img
-        src="/plot-flow-logo-transparent.png"
-        alt="Plot Flow"
-        width={132}
-        className="m-4 w-[132px] max-h-20 object-contain"
-      />
-      <div className="flex flex-col w-full items-center gap-1 pt-2 border-t border-mid-gray/20">
-        {availableSections.map((section) => {
+    <nav
+      aria-label={t("shell.navigation")}
+      className="pf-vibrant flex h-full w-46 shrink-0 flex-col px-2.5 pt-1.5 pb-3"
+    >
+      <ul className="flex flex-col gap-px">
+        {ORDER.map((id) => {
+          const section = SECTIONS_CONFIG[id];
           const Icon = section.icon;
-          const isActive = activeSection === section.id;
-
+          const isActive = activeSection === id;
           return (
-            <div
-              key={section.id}
-              className={`flex gap-2 items-center p-2 w-full rounded-lg cursor-pointer transition-colors ${
-                isActive
-                  ? "bg-logo-primary/80"
-                  : "hover:bg-mid-gray/20 hover:opacity-100 opacity-85"
-              }`}
-              onClick={() => onSectionChange(section.id)}
-            >
-              <Icon width={24} height={24} className="shrink-0" />
-              <p
-                className="text-sm font-medium truncate"
-                title={t(section.labelKey)}
+            <li key={id} className="relative">
+              {isActive && (
+                <motion.span
+                  layoutId="pf-nav-active"
+                  className="absolute inset-0 rounded-[8px] bg-text/[0.075] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                  transition={SPRING_SNAPPY}
+                />
+              )}
+              <motion.button
+                type="button"
+                aria-current={isActive ? "page" : undefined}
+                onClick={() => onSectionChange(id)}
+                whileTap={{ scale: PRESS_SCALE }}
+                transition={SPRING_SNAPPY}
+                className={`relative flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 text-[13px] font-medium tracking-[-0.006em] transition-colors duration-150 ${
+                  isActive
+                    ? "text-text"
+                    : "text-text-muted hover:bg-text/[0.04] hover:text-text"
+                }`}
               >
-                {t(section.labelKey)}
-              </p>
-            </div>
+                <Icon
+                  className={`h-4 w-4 shrink-0 transition-colors duration-150 ${
+                    isActive ? "text-logo-primary" : ""
+                  }`}
+                  strokeWidth={isActive ? 2.1 : 1.8}
+                />
+                <span className="truncate" title={t(section.labelKey)}>
+                  {t(section.labelKey)}
+                </span>
+              </motion.button>
+            </li>
           );
         })}
-      </div>
-      <img
-        src="/bilbo-baggins-transparent.png"
-        alt=""
-        aria-hidden="true"
-        className="mt-auto w-32 h-36 object-contain shrink-0"
-      />
-    </div>
+      </ul>
+
+      {version && (
+        <p className="mt-auto px-2.5 text-[10.5px] tabular-nums text-text-muted/55">
+          {t("shell.version", { version })}
+        </p>
+      )}
+    </nav>
   );
 };

@@ -276,47 +276,61 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
   const progressPercent = getProgressPercent();
 
+  // Before the first play there is no metadata yet: show just the button and
+  // a quiet track, so idle rows stay calm.
+  const started = Boolean(src) && duration > 0;
+
   return (
-    <div className={`flex items-center gap-3 ${className}`}>
+    <div className={`flex items-center gap-2 ${className}`}>
       <audio ref={audioRef} src={src ?? undefined} preload="metadata" />
 
       <button
+        type="button"
         onClick={togglePlay}
         disabled={isLoading}
-        className="transition-colors cursor-pointer text-text hover:text-logo-primary disabled:opacity-50"
+        className={`flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-full transition-[background-color,color,transform] duration-150 active:scale-[0.92] disabled:opacity-50 ${
+          isPlaying
+            ? "bg-logo-primary text-on-accent"
+            : "bg-text/[0.07] text-text hover:bg-text/[0.12]"
+        }`}
         aria-label={isPlaying ? "Pause" : "Play"}
       >
         {isPlaying ? (
-          <Pause width={20} height={20} fill="currentColor" />
+          <Pause width={11} height={11} fill="currentColor" strokeWidth={0} />
         ) : (
-          <Play width={20} height={20} fill="currentColor" />
+          <Play
+            width={11}
+            height={11}
+            fill="currentColor"
+            strokeWidth={0}
+            className="translate-x-[0.5px]"
+          />
         )}
       </button>
 
-      <div className="flex-1 flex items-center gap-2">
-        <span className="text-xs text-text/60 min-w-[30px] tabular-nums">
-          {formatTime(currentTime)}
-        </span>
+      <input
+        type="range"
+        min="0"
+        max={duration || 0}
+        step="0.01"
+        value={currentTime}
+        onChange={handleSeek}
+        onMouseDown={handleSliderMouseDown}
+        onTouchStart={handleSliderTouchStart}
+        aria-label={formatTime(currentTime)}
+        className={`pf-scrubber h-[3px] min-w-0 flex-1 cursor-pointer appearance-none rounded-full focus:outline-none`}
+        style={{
+          background: `linear-gradient(to right, var(--color-logo-primary) 0%, var(--color-logo-primary) ${progressPercent}%, color-mix(in srgb, var(--color-text) 12%, transparent) ${progressPercent}%)`,
+        }}
+      />
 
-        <input
-          type="range"
-          min="0"
-          max={duration || 0}
-          step="0.01"
-          value={currentTime}
-          onChange={handleSeek}
-          onMouseDown={handleSliderMouseDown}
-          onTouchStart={handleSliderTouchStart}
-          className={`flex-1 h-1 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-logo-primary ${progressPercent >= 99.5 ? "[&::-webkit-slider-thumb]:translate-x-0.5 [&::-moz-range-thumb]:translate-x-0.5" : ""}`}
-          style={{
-            background: `linear-gradient(to right, #FAA2CA 0%, #FAA2CA ${progressPercent}%, rgba(128, 128, 128, 0.2) ${progressPercent}%, rgba(128, 128, 128, 0.2) 100%)`,
-          }}
-        />
-
-        <span className="text-xs text-text/60 min-w-[30px] tabular-nums">
-          {formatTime(duration)}
-        </span>
-      </div>
+      <span className="w-[30px] shrink-0 text-end text-[11px] text-text-muted tabular-nums">
+        {started && isPlaying
+          ? formatTime(currentTime)
+          : started
+            ? formatTime(duration)
+            : ""}
+      </span>
     </div>
   );
 };

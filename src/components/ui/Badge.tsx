@@ -6,20 +6,21 @@ interface BadgeProps {
   className?: string;
 }
 
+/** Pill badge with a hairline border, as on amicro.dev. */
 const Badge: React.FC<BadgeProps> = ({
   children,
   variant = "primary",
   className = "",
 }) => {
   const variantClasses = {
-    primary: "bg-logo-primary",
-    success: "bg-green-500/20 text-green-400",
-    secondary: "bg-mid-gray/20 text-text/70",
+    primary: "border-logo-primary/35 bg-logo-primary/12 text-accent-hi",
+    success: "border-emerald-500/25 bg-emerald-500/10 text-emerald-400",
+    secondary: "border-text/10 bg-text/5 text-text-muted",
   };
 
   return (
     <span
-      className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${variantClasses[variant]} ${className}`}
+      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border text-[11px] font-medium tracking-tight ${variantClasses[variant]} ${className}`}
     >
       {children}
     </span>
