@@ -109,7 +109,9 @@ pub(crate) fn model_installed(p: &LlmPaths) -> bool {
 
 fn status_for(p: Option<&LlmPaths>) -> LlmStatus {
     LlmStatus {
-        installed: p.map(|p| runtime_installed(p) && model_installed(p)).unwrap_or(false),
+        installed: p
+            .map(|p| runtime_installed(p) && model_installed(p))
+            .unwrap_or(false),
         server_running: server::is_running(),
         model_name: MODEL_DISPLAY_NAME.to_string(),
         model_size_mb: MODEL.size / (1024 * 1024),
@@ -256,7 +258,9 @@ async fn chat(ep: server::Endpoint, system: &str, user: &str) -> Result<String, 
         .await
         .map_err(|e| format!("Непонятный ответ нейросети: {}", e))?;
     if !status.is_success() {
-        let msg = json["error"]["message"].as_str().unwrap_or("неизвестная ошибка");
+        let msg = json["error"]["message"]
+            .as_str()
+            .unwrap_or("неизвестная ошибка");
         return Err(format!("Ошибка нейросети ({}): {}", status.as_u16(), msg));
     }
     let content = json["choices"][0]["message"]["content"]
@@ -276,7 +280,10 @@ mod tests {
     #[test]
     fn paths_layout() {
         let p = LlmPaths::new(PathBuf::from("data").join("llm"));
-        assert!(p.server_exe.ends_with("llm/bin/llama-server.exe") || p.server_exe.ends_with("llm\\bin\\llama-server.exe"));
+        assert!(
+            p.server_exe.ends_with("llm/bin/llama-server.exe")
+                || p.server_exe.ends_with("llm\\bin\\llama-server.exe")
+        );
         assert_eq!(p.model_path.file_name().unwrap(), MODEL.file_name);
         assert_eq!(p.model_path.parent().unwrap(), p.models_dir);
     }
@@ -308,7 +315,10 @@ mod tests {
     fn pinned_hashes_look_valid() {
         for a in [&RUNTIME, &MODEL] {
             assert_eq!(a.sha256.len(), 64);
-            assert!(a.sha256.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+            assert!(a
+                .sha256
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
             assert!(a.url.starts_with("https://") && a.url.ends_with(a.file_name));
         }
     }

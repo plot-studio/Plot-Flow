@@ -291,7 +291,12 @@ mod tests {
         let flags = CaptureFlags::default();
         let (mut producer, mut consumer) = RingBuffer::<f32>::new(2);
         // 3 stereo frames into a 2-slot ring: 2 written, 1 dropped.
-        write_mono(&[1.0f32, 0.0, 0.5, 0.5, -1.0, -1.0], 2, &mut producer, &flags);
+        write_mono(
+            &[1.0f32, 0.0, 0.5, 0.5, -1.0, -1.0],
+            2,
+            &mut producer,
+            &flags,
+        );
         assert_eq!(consumer.pop().unwrap(), 0.5);
         assert_eq!(consumer.pop().unwrap(), 0.5);
         assert!(consumer.pop().is_err());

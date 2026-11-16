@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, LogicalSize, Manager};
 
+use super::diarizer_model::{self, MeetingDiarizerStatus};
 use super::export;
 use super::types::{
     MeetingDetail, MeetingExportFormat, MeetingInfo, MeetingSources, MeetingStatus,
@@ -90,7 +91,10 @@ pub fn meeting_status(app: AppHandle) -> Result<MeetingStatus, String> {
 #[tauri::command]
 #[specta::specta]
 pub fn meeting_list(app: AppHandle) -> Result<Vec<MeetingInfo>, String> {
-    manager(&app)?.store().list_infos().map_err(|e| e.to_string())
+    manager(&app)?
+        .store()
+        .list_infos()
+        .map_err(|e| e.to_string())
 }
 
 /// One meeting with speakers and segments.
@@ -190,6 +194,21 @@ pub fn meeting_set_panel(app: AppHandle, open: bool) -> Result<(), String> {
     }
     window.set_size(size).map_err(map)?;
     Ok(())
+}
+
+/// Whether the speaker-separation model is installed (or downloading).
+#[tauri::command]
+#[specta::specta]
+pub fn meeting_diarizer_status(app: AppHandle) -> Result<MeetingDiarizerStatus, String> {
+    Ok(diarizer_model::status(&app))
+}
+
+/// Download the speaker-separation model (progress: `meeting-diarizer-progress`,
+/// end: `meeting-diarizer-finished`). Used from the next system segment on.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_diarizer_install(app: AppHandle) -> Result<(), String> {
+    diarizer_model::install(&app).await
 }
 
 /// Ask the local LLM for a short summary, store it and return it.

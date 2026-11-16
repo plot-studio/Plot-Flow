@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import {
   Loader2,
@@ -14,7 +15,12 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { PRESS_SCALE, SPRING, SPRING_SNAPPY } from "@/lib/motion";
-import { commands, type MeetingInfo, type MeetingSources } from "@/bindings";
+import {
+  commands,
+  type MeetingDiarizerStatus,
+  type MeetingInfo,
+  type MeetingSources,
+} from "@/bindings";
 import { Dialog } from "@/components/ui/Dialog";
 import { Button } from "@/components/ui/Button";
 import { formatClock, isActiveState, useMeetingUi } from "./meetingStore";
@@ -178,7 +184,86 @@ const IdleRecorder: React.FC = () => {
           {t("meeting.sources.none")}
         </p>
       )}
+      {sources.system_audio && <DiarizerOffer />}
     </section>
+  );
+};
+
+/** One quiet line offering the speaker-separation model until it is installed. */
+const DiarizerOffer: React.FC = () => {
+  const { t } = useTranslation();
+  const [status, setStatus] = useState<MeetingDiarizerStatus | null>(null);
+  const [percent, setPercent] = useState<number | null>(null);
+  const tRef = useRef(t);
+  tRef.current = t;
+
+  useEffect(() => {
+    let alive = true;
+    void commands
+      .meetingDiarizerStatus()
+      .then((res) => {
+        if (!alive || res.status !== "ok") return;
+        setStatus(res.data);
+        if (res.data.installing) setPercent((p) => p ?? 0);
+      })
+      .catch(() => undefined);
+    const unlisteners = [
+      listen<{ downloaded: number; total: number }>(
+        "meeting-diarizer-progress",
+        (e) => {
+          const { downloaded, total } = e.payload;
+          setPercent(total > 0 ? Math.floor((downloaded / total) * 100) : 0);
+        },
+      ),
+      listen<{ ok: boolean; error: string | null }>(
+        "meeting-diarizer-finished",
+        (e) => {
+          setPercent(null);
+          setStatus((s) =>
+            s ? { ...s, installed: e.payload.ok, installing: false } : s,
+          );
+          if (e.payload.ok) {
+            toast.success(tRef.current("meeting.diarizer.done"));
+          } else {
+            toast.error(tRef.current("meeting.diarizer.failed"), {
+              description: e.payload.error ?? undefined,
+            });
+          }
+        },
+      ),
+    ];
+    return () => {
+      alive = false;
+      unlisteners.forEach((p) => void p.then((fn) => fn()));
+    };
+  }, []);
+
+  if (!status || status.installed) return null;
+  const downloading = percent != null;
+
+  const install = async () => {
+    if (downloading) return;
+    setPercent(0);
+    // The outcome arrives as `meeting-diarizer-finished`.
+    const res = await commands.meetingDiarizerInstall().catch(() => null);
+    if (res?.status !== "ok") {
+      // Rejected before starting: show the offer again unless a download runs.
+      const st = await commands.meetingDiarizerStatus().catch(() => null);
+      if (!st || st.status !== "ok" || !st.data.installing) setPercent(null);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={() => void install()}
+      disabled={downloading}
+      className="-mt-1 cursor-pointer text-[12px] text-text-muted transition-colors duration-150 hover:text-text disabled:cursor-default disabled:hover:text-text-muted"
+    >
+      {downloading
+        ? t("meeting.diarizer.downloading", { percent })
+        : t("meeting.diarizer.offer", { size: status.size_mb })}
+    </button>
   );
 };
 

@@ -1057,6 +1057,22 @@ async meetingSummarize(meetingId: number) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async meetingDiarizerStatus() : Promise<Result<MeetingDiarizerStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_diarizer_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingDiarizerInstall() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_diarizer_install") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async llmStatus() : Promise<Result<LlmStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_status") };
@@ -1345,6 +1361,10 @@ export type MeetingSegment = { id: number; meeting_id: number; t0_ms: number; t1
 export type MeetingDetail = { info: MeetingInfo; speakers: MeetingSpeaker[]; segments: MeetingSegment[] }
 export type MeetingExportFormat = "txt" | "md" | "json" | "srt"
 export type LlmStatus = { installed: boolean; server_running: boolean; model_name: string; model_size_mb: number; installing: boolean }
+/**
+ * Speaker-separation model of meeting mode (`meeting_diarizer_status`).
+ */
+export type MeetingDiarizerStatus = { installed: boolean; installing: boolean; size_mb: number }
 
 /** tauri-specta globals **/
 

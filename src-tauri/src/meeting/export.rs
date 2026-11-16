@@ -194,9 +194,7 @@ pub fn export_file_name(meeting_id: i64, date_slug: &str, format: MeetingExportF
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::meeting::types::{
-        MeetingInfo, MeetingRecordStatus, MeetingSource, MeetingSources,
-    };
+    use crate::meeting::types::{MeetingInfo, MeetingRecordStatus, MeetingSource, MeetingSources};
 
     fn detail() -> MeetingDetail {
         MeetingDetail {
@@ -236,9 +234,30 @@ mod tests {
                 },
             ],
             segments: vec![
-                seg(11, 723_000, 725_500, Some(2), MeetingSource::System, "Добрый день"),
-                seg(10, 1_200, 3_000, Some(1), MeetingSource::Microphone, " Привет "),
-                seg(12, 800_000, 801_000, Some(1), MeetingSource::Microphone, "   "),
+                seg(
+                    11,
+                    723_000,
+                    725_500,
+                    Some(2),
+                    MeetingSource::System,
+                    "Добрый день",
+                ),
+                seg(
+                    10,
+                    1_200,
+                    3_000,
+                    Some(1),
+                    MeetingSource::Microphone,
+                    " Привет ",
+                ),
+                seg(
+                    12,
+                    800_000,
+                    801_000,
+                    Some(1),
+                    MeetingSource::Microphone,
+                    "   ",
+                ),
             ],
         }
     }

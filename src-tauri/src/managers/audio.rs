@@ -288,9 +288,13 @@ fn capture_endpoint_volume(
         }
         let device = match device {
             Some(found) => found,
-            None => enumerator.GetDefaultAudioEndpoint(eCapture, eConsole).ok()?,
+            None => enumerator
+                .GetDefaultAudioEndpoint(eCapture, eConsole)
+                .ok()?,
         };
-        device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok()
+        device
+            .Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
+            .ok()
     }
 }
 
@@ -769,10 +773,7 @@ impl AudioRecordingManager {
         let settings = get_settings(&self.app_handle);
         let device_name = self.active_microphone_name(&settings);
         if set_mic_level(device_name.as_deref(), previous) {
-            debug!(
-                "Microphone level restored to {:.0}%",
-                previous * 100.0
-            );
+            debug!("Microphone level restored to {:.0}%", previous * 100.0);
         } else {
             error!("Failed to restore the microphone level; it stays at 100%");
         }

@@ -1,7 +1,6 @@
 use crate::audio_toolkit::{
-    apply_custom_words, boost_quiet_audio, detect_output_language,
-    normalize_transcription_output, plan_chunks, remove_filler_words, strip_trailing_period,
-    OutputLanguageEvidence,
+    apply_custom_words, boost_quiet_audio, detect_output_language, normalize_transcription_output,
+    plan_chunks, remove_filler_words, strip_trailing_period, OutputLanguageEvidence,
 };
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
@@ -189,7 +188,10 @@ mod engine_checkout_tests {
     #[test]
     fn empty_idle_slot_is_not_loaded() {
         let s = slot(None);
-        assert_eq!(checkout(&s, Duration::from_secs(5)), EngineCheckout::NotLoaded);
+        assert_eq!(
+            checkout(&s, Duration::from_secs(5)),
+            EngineCheckout::NotLoaded
+        );
     }
 
     #[test]

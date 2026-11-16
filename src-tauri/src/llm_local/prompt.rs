@@ -5,7 +5,7 @@
 /// System prompt for summarizing a whole meeting (or one chunk of it).
 /// Tuned on Qwen3.5-4B (Q4_K_M) with Russian ASR transcripts.
 pub const SYSTEM_PROMPT: &str = "\
-Ты — внимательный секретарь встречи. Тебе дают расшифровку разговора, сделанную распознаванием речи: в ней бывают ошибки в словах, повторы и слова-паразиты («ну», «э-э», «как бы»). Реплики помечены «Я:» (владелец записи) и «Собеседник:».
+Ты — внимательный секретарь встречи. Тебе дают расшифровку разговора, сделанную распознаванием речи: в ней бывают ошибки в словах, повторы и слова-паразиты («ну», «э-э», «как бы»). Реплики помечены «Я:» (владелец записи) и «Собеседник:» (если собеседников несколько — «Собеседник 1:», «Собеседник 2:» и т. д.; это разные люди).
 
 Составь короткое резюме встречи на русском языке в формате Markdown строго по шаблону:
 
@@ -28,7 +28,7 @@ pub const SYSTEM_PROMPT: &str = "\
 - Если дата или итог зависят от условия, укажи условие («1 декабря, если выберут виджет, иначе 8 декабря»).
 - Предложения, которые только обсуждали, но не приняли, — не решения, их место в «Открытых вопросах».
 - Задачи — это явные обещания («я сделаю», «запиши на меня», «к среде») и итоговый список задач, если его проговорили. Не пропускай ни одной.
-- Владельца записи пиши «Я», собеседника — по имени, если оно прозвучало, иначе «Собеседник». Если срок не назван, пиши «срок не назван».
+- Владельца записи пиши «Я», собеседника — по имени, если оно прозвучало, иначе так, как он помечен в расшифровке («Собеседник», «Собеседник 2»). Если срок не назван, пиши «срок не назван».
 - Числа, суммы, даты, имена и названия переноси точно; явные ошибки распознавания исправляй по смыслу.
 - Каждый пункт — одна короткая строка, до 20 слов. Без вступления и без заключения.
 - Раздел, для которого нечего написать, пропусти целиком вместе с заголовком.";
@@ -155,7 +155,11 @@ pub fn split_transcript(text: &str, max_chars: usize) -> Vec<String> {
             chunks.extend(split_long_line(line, max_chars));
             continue;
         }
-        let extra = if current.is_empty() { line_len } else { line_len + 1 };
+        let extra = if current.is_empty() {
+            line_len
+        } else {
+            line_len + 1
+        };
         if current_len + extra > max_chars && !current.is_empty() {
             chunks.push(std::mem::take(&mut current));
             current_len = 0;
@@ -296,7 +300,9 @@ mod tests {
 
     #[test]
     fn merge_groups_fit_or_make_progress() {
-        let parts: Vec<String> = (0..7).map(|i| format!("- пункт {} {}", i, "x".repeat(80))).collect();
+        let parts: Vec<String> = (0..7)
+            .map(|i| format!("- пункт {} {}", i, "x".repeat(80)))
+            .collect();
         assert_eq!(group_for_merge(&parts, 100_000).len(), 1);
         let groups = group_for_merge(&parts, 300);
         assert!(groups.len() > 1 && groups.len() < parts.len());
@@ -306,14 +312,22 @@ mod tests {
 
     #[test]
     fn clean_answer_strips_think_and_fences() {
-        assert_eq!(clean_answer("<think>hmm</think>\n## Главное\n- x"), "## Главное\n- x");
+        assert_eq!(
+            clean_answer("<think>hmm</think>\n## Главное\n- x"),
+            "## Главное\n- x"
+        );
         assert_eq!(clean_answer("```markdown\n## Главное\n```"), "## Главное");
         assert_eq!(clean_answer("  ## Главное  "), "## Главное");
     }
 
     #[test]
     fn system_prompt_has_all_sections() {
-        for s in ["## Главное", "## Решения", "## Задачи (кто → что → срок)", "## Открытые вопросы"] {
+        for s in [
+            "## Главное",
+            "## Решения",
+            "## Задачи (кто → что → срок)",
+            "## Открытые вопросы",
+        ] {
             assert!(SYSTEM_PROMPT.contains(s));
             assert!(MERGE_PROMPT.contains(s));
         }

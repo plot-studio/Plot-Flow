@@ -267,7 +267,9 @@ fn attach_kill_on_close_job(child: &Child) {
         return;
     };
     let process = HANDLE(child.as_raw_handle() as *mut std::ffi::c_void);
-    if let Err(e) = unsafe { AssignProcessToJobObject(HANDLE(job as *mut std::ffi::c_void), process) } {
+    if let Err(e) =
+        unsafe { AssignProcessToJobObject(HANDLE(job as *mut std::ffi::c_void), process) }
+    {
         log::warn!("Local LLM: could not attach the server to a job object: {e}");
     }
 }
@@ -339,7 +341,10 @@ pub(super) async fn ensure_running(p: &LlmPaths) -> Result<Endpoint, String> {
     let (child, port, gpu) = match start_one(p, true).await {
         Ok((child, port)) => (child, port, true),
         Err(gpu_err) => {
-            log::warn!("Local LLM GPU start failed, falling back to CPU: {}", gpu_err);
+            log::warn!(
+                "Local LLM GPU start failed, falling back to CPU: {}",
+                gpu_err
+            );
             match start_one(p, false).await {
                 Ok((child, port)) => (child, port, false),
                 Err(cpu_err) => {

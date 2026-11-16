@@ -213,7 +213,10 @@ mod tests {
         let mut expected_start = 0;
         for r in &ranges {
             assert_eq!(r.start, expected_start, "chunks must be contiguous");
-            assert!(r.end - r.start <= max_ms as usize * SR / 1000, "chunk too long: {r:?}");
+            assert!(
+                r.end - r.start <= max_ms as usize * SR / 1000,
+                "chunk too long: {r:?}"
+            );
             expected_start = r.end;
         }
         assert_eq!(expected_start, audio.len(), "chunks must cover the audio");
@@ -254,7 +257,10 @@ mod tests {
     fn quiet_audio_is_boosted_and_capped() {
         let mut faint = vec![0.0, 0.02, -0.02, 0.01];
         let gain = boost_quiet_audio(&mut faint).expect("faint audio gets gain");
-        assert!((gain - 16.0).abs() < 1e-6, "gain is capped at 16x, got {gain}");
+        assert!(
+            (gain - 16.0).abs() < 1e-6,
+            "gain is capped at 16x, got {gain}"
+        );
         assert!((faint[1] - 0.32).abs() < 1e-6);
 
         let mut moderate = vec![0.0, 0.19, -0.1];

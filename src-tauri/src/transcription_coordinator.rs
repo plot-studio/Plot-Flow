@@ -175,7 +175,9 @@ enum Command {
     /// must never be timed at dequeue — that turned a 120 ms tap into a
     /// "hold" and the release stopped the recording it had just started.
     Input(InputEvent, Instant),
-    Cancel { recording_was_active: bool },
+    Cancel {
+        recording_was_active: bool,
+    },
     ProcessingFinished,
 }
 

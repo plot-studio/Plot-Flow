@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::capture::{self, CaptureStream};
+use super::remote_speakers::RemoteSpeakers;
 use super::store::MeetingStore;
 use super::types::{
     MeetingErrorPayload, MeetingSegment, MeetingSource, MeetingState, MeetingStatus,
@@ -981,15 +982,18 @@ fn run_source(
             let switched = source == MeetingSource::System
                 && current_default_output().is_some_and(|name| name != stream.device_name);
             if failed || switched {
-                match capture::open_source(source, processor.ctx.selected_microphone.as_deref())
-                {
+                match capture::open_source(source, processor.ctx.selected_microphone.as_deref()) {
                     Ok(new_stream) => {
                         log::info!(
                             "Meeting {:?}: switching capture {:?} -> {:?} ({})",
                             source,
                             stream.device_name,
                             new_stream.device_name,
-                            if failed { "device lost" } else { "default changed" }
+                            if failed {
+                                "device lost"
+                            } else {
+                                "default changed"
+                            }
                         );
                         // Finish what the old device delivered, then close it
                         // (on this thread, as cpal requires).
@@ -1075,50 +1079,152 @@ fn run_worker(
     shared: Arc<SessionShared>,
     jobs: Receiver<SegmentJob>,
 ) {
+    let mut remote = RemoteSpeakers::new(shared.meeting_id);
     while let Ok(job) = jobs.recv() {
         if shared.discard.load(Ordering::Acquire) {
             continue;
         }
-        let text = match transcribe_with_retry(&app, &shared, &job.samples) {
-            Ok(text) => text.trim().to_string(),
-            Err(e) => {
-                // Never lose a segment because the engine was busy or failed:
-                // keep its place in the timeline with a marker.
-                report_error(&app, &shared, format!("Ошибка распознавания: {e}"));
-                UNRECOGNIZED_TEXT.to_string()
-            }
+        // Computer sound: tell the remote speakers apart (when the model is
+        // installed); a segment with a clear speaker change is split.
+        let pieces = if job.source == MeetingSource::System {
+            remote.split(
+                &app,
+                &store,
+                &shared,
+                job.speaker_id,
+                job.t0_ms,
+                &job.samples,
+            )
+        } else {
+            None
         };
-        if shared.discard.load(Ordering::Acquire) {
-            continue;
-        }
-        if text.is_empty() {
-            // Recognition succeeded and heard nothing: drop the row.
-            let _ = store.delete_segment(job.segment_id);
-            let _ = app.emit(
-                "meeting-segment",
-                MeetingSegment {
-                    id: job.segment_id,
-                    meeting_id: shared.meeting_id,
+        let Some(pieces) = pieces else {
+            finish_piece(
+                &app,
+                &store,
+                &shared,
+                PieceRow {
+                    segment_id: job.segment_id,
+                    source: job.source,
+                    speaker_id: job.speaker_id,
                     t0_ms: job.t0_ms,
                     t1_ms: job.t1_ms,
-                    speaker_id: job.speaker_id,
-                    source: job.source,
-                    text: String::new(),
-                    is_final: true,
                 },
+                &job.samples,
             );
             continue;
-        }
-        match store.finalize_segment(job.segment_id, job.t1_ms, &text) {
-            Ok(Some(segment)) => {
-                shared.segment_count.fetch_add(1, Ordering::Relaxed);
-                let _ = app.emit("meeting-segment", segment);
+        };
+        let mut rows = Vec::with_capacity(pieces.len());
+        for (i, piece) in pieces.iter().enumerate() {
+            let segment = if i == 0 {
+                // The tentative row of the job becomes the first piece.
+                store
+                    .update_segment_span(job.segment_id, piece.t0_ms, piece.t1_ms, piece.speaker_id)
+                    .map_err(|e| e.to_string())
+                    .and_then(|row| row.ok_or_else(String::new))
+            } else {
+                store
+                    .insert_segment(
+                        shared.meeting_id,
+                        piece.t0_ms,
+                        piece.t1_ms,
+                        piece.speaker_id,
+                        job.source,
+                        "",
+                        false,
+                    )
+                    .map_err(|e| e.to_string())
+            };
+            match segment {
+                Ok(segment) => {
+                    let _ = app.emit("meeting-segment", segment.clone());
+                    rows.push((
+                        PieceRow {
+                            segment_id: segment.id,
+                            source: job.source,
+                            speaker_id: piece.speaker_id,
+                            t0_ms: piece.t0_ms,
+                            t1_ms: piece.t1_ms,
+                        },
+                        piece.samples.clone(),
+                    ));
+                }
+                // The row is gone: the meeting is being discarded.
+                Err(e) if e.is_empty() => break,
+                Err(e) => {
+                    report_error(&app, &shared, format!("Не удалось сохранить фрагмент: {e}"));
+                }
             }
-            Ok(None) => {}
-            Err(e) => report_error(&app, &shared, format!("Не удалось сохранить текст: {e}")),
+        }
+        for (row, range) in rows {
+            if shared.discard.load(Ordering::Acquire) {
+                break;
+            }
+            finish_piece(&app, &store, &shared, row, &job.samples[range]);
         }
     }
-    log::info!("Meeting {} transcription worker finished", shared.meeting_id);
+    log::info!(
+        "Meeting {} transcription worker finished",
+        shared.meeting_id
+    );
+}
+
+/// Where the text of one recognized piece goes.
+struct PieceRow {
+    segment_id: i64,
+    source: MeetingSource,
+    speaker_id: Option<i64>,
+    t0_ms: u64,
+    t1_ms: u64,
+}
+
+/// Recognize `samples` and store the text in `row` (or drop the row when
+/// nothing was heard), emitting the final `meeting-segment`.
+fn finish_piece(
+    app: &AppHandle,
+    store: &MeetingStore,
+    shared: &SessionShared,
+    row: PieceRow,
+    samples: &[f32],
+) {
+    let text = match transcribe_with_retry(app, shared, samples) {
+        Ok(text) => text.trim().to_string(),
+        Err(e) => {
+            // Never lose a segment because the engine was busy or failed:
+            // keep its place in the timeline with a marker.
+            report_error(app, shared, format!("Ошибка распознавания: {e}"));
+            UNRECOGNIZED_TEXT.to_string()
+        }
+    };
+    if shared.discard.load(Ordering::Acquire) {
+        return;
+    }
+    if text.is_empty() {
+        // Recognition succeeded and heard nothing: drop the row.
+        let _ = store.delete_segment(row.segment_id);
+        let _ = app.emit(
+            "meeting-segment",
+            MeetingSegment {
+                id: row.segment_id,
+                meeting_id: shared.meeting_id,
+                t0_ms: row.t0_ms,
+                t1_ms: row.t1_ms,
+                speaker_id: row.speaker_id,
+                source: row.source,
+                text: String::new(),
+                is_final: true,
+            },
+        );
+        return;
+    }
+    match store.finalize_segment(row.segment_id, row.t1_ms, &text) {
+        Ok(Some(segment)) => {
+            shared.segment_count.fetch_add(1, Ordering::Relaxed);
+            let _ = app.emit("meeting-segment", segment);
+        }
+        Ok(None) => {}
+        Err(e) => report_error(app, shared, format!("Не удалось сохранить текст: {e}")),
+    }
 }
 
 /// Recognize `samples`, retrying up to [`TRANSCRIBE_RETRIES`] times with a
@@ -1234,7 +1340,9 @@ mod tests {
         assert!(seg.push_speech(10, &[LOUD; 10], 10).is_none());
         // Past the soft limit, but the frame is voiced and loud: no cut.
         assert!(seg.push_speech(20, &[LOUD; 10], 10).is_none());
-        let run = seg.push_speech(30, &[LOUD; 10], 10).expect("cut at hard max");
+        let run = seg
+            .push_speech(30, &[LOUD; 10], 10)
+            .expect("cut at hard max");
         assert_eq!(run.start, 0);
         assert_eq!(run.samples.len(), 30);
         // Speech continues: a new run starts at the next slice.

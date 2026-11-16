@@ -135,7 +135,9 @@ impl PendingBuffer {
 static PENDING: Mutex<PendingBuffer> = Mutex::new(PendingBuffer::new());
 
 fn pending() -> MutexGuard<'static, PendingBuffer> {
-    PENDING.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    PENDING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Call when a recording starts delivering text.

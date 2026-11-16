@@ -8,6 +8,7 @@ mod catalog;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod download;
 mod focus;
 mod helpers;
 mod input;
@@ -808,6 +809,8 @@ pub fn run(cli_args: CliArgs) {
             meeting::commands::meeting_export,
             meeting::commands::meeting_set_panel,
             meeting::commands::meeting_summarize,
+            meeting::commands::meeting_diarizer_status,
+            meeting::commands::meeting_diarizer_install,
             llm_local::llm_status,
             llm_local::llm_install,
         ])

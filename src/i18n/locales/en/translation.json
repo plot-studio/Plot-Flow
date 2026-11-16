@@ -849,6 +849,12 @@
       "hint": "Computer audio captures the other side of Telegram, Telemost or Zoom calls — no bot in the call.",
       "none": "Turn on at least one source to start."
     },
+    "diarizer": {
+      "offer": "Tell remote speakers apart — download model ({{size}} MB)",
+      "downloading": "Downloading model — {{percent}}%",
+      "done": "Remote speakers will be told apart",
+      "failed": "Could not download the model"
+    },
     "levels": {
       "me": "Me",
       "others": "Others"

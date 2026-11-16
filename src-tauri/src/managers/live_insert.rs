@@ -78,8 +78,8 @@ pub(crate) fn run(tm: &TranscriptionManager, frames: mpsc::Receiver<Vec<f32>>) -
     loop {
         let disconnected = match frames.recv_timeout(Duration::from_millis(100)) {
             Ok(frame) => {
-                let rms = (frame.iter().map(|s| s * s).sum::<f32>() / frame.len().max(1) as f32)
-                    .sqrt();
+                let rms =
+                    (frame.iter().map(|s| s * s).sum::<f32>() / frame.len().max(1) as f32).sqrt();
                 if rms >= SILENCE_RMS {
                     last_voice = Instant::now();
                 }
@@ -96,9 +96,8 @@ pub(crate) fn run(tm: &TranscriptionManager, frames: mpsc::Receiver<Vec<f32>>) -
 
         let phrase_ms = phrase.len() * 1000 / SAMPLE_RATE;
         let paused = last_voice.elapsed() >= PAUSE;
-        let flush = disconnected
-            || phrase_ms >= MAX_PHRASE_MS
-            || (paused && phrase_ms >= MIN_PHRASE_MS);
+        let flush =
+            disconnected || phrase_ms >= MAX_PHRASE_MS || (paused && phrase_ms >= MIN_PHRASE_MS);
         if flush && !phrase.is_empty() {
             let audio = std::mem::take(&mut phrase);
             match transcribe_with_retry(tm, audio) {
@@ -117,7 +116,10 @@ pub(crate) fn run(tm: &TranscriptionManager, frames: mpsc::Receiver<Vec<f32>>) -
             }
         }
         if disconnected {
-            info!("Live insert finished: {} chars pasted", pasted.chars().count());
+            info!(
+                "Live insert finished: {} chars pasted",
+                pasted.chars().count()
+            );
             return pasted;
         }
     }

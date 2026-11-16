@@ -1,22 +1,13 @@
 //! Downloading and unpacking the llama.cpp runtime and the GGUF model.
 
 use super::{paths, MODEL, RUNTIME};
-use futures_util::StreamExt;
+use crate::download::{self, DownloadError};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
-use tokio::io::AsyncWriteExt;
 
 pub(super) static INSTALLING: AtomicBool = AtomicBool::new(false);
-
-/// No bytes for this long → the download is considered stalled.
-const STALL_TIMEOUT: Duration = Duration::from_secs(60);
-const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
-const MAX_ATTEMPTS: usize = 4;
 
 #[derive(Clone, Serialize)]
 struct ProgressPayload {
@@ -70,11 +61,7 @@ async fn install_inner(app: &AppHandle) -> Result<(), String> {
     std::fs::create_dir_all(&p.tmp_dir)
         .map_err(|e| format!("Не удалось создать папку {}: {}", p.tmp_dir.display(), e))?;
 
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(20))
-        .user_agent("plot-flow")
-        .build()
-        .map_err(|e| format!("Ошибка сети: {}", e))?;
+    let client = download::client()?;
 
     // 1. Runtime (llama-server + DLLs).
     if !super::runtime_installed(&p) {
@@ -130,13 +117,10 @@ fn emit_progress(app: &AppHandle, stage: &'static str, downloaded: u64, total: u
 }
 
 fn move_file(from: &Path, to: &Path) -> Result<(), String> {
-    let _ = std::fs::remove_file(to);
-    std::fs::rename(from, to).map_err(|e| format!("Не удалось сохранить {}: {}", to.display(), e))
+    download::move_file(from, to)
 }
 
-/// Downloads `url` to `dest` (a temp path), resuming a partial file, then
-/// checks size and SHA-256. A corrupt file is deleted so the next attempt
-/// starts clean.
+/// Shared verified download, reporting progress as `llm-install-progress`.
 async fn download_verified(
     app: &AppHandle,
     client: &reqwest::Client,
@@ -146,139 +130,17 @@ async fn download_verified(
     size: u64,
     sha256: &str,
 ) -> Result<(), String> {
-    let mut last_err = String::new();
-    for attempt in 1..=MAX_ATTEMPTS {
-        match download_resumable(app, client, stage, url, dest, size).await {
-            Ok(()) => {
-                last_err.clear();
-                break;
-            }
-            Err(e) => {
-                log::warn!("LLM download {} attempt {} failed: {}", stage, attempt, e);
-                last_err = e;
-                if attempt < MAX_ATTEMPTS {
-                    tokio::time::sleep(Duration::from_secs(2 * attempt as u64)).await;
-                }
-            }
-        }
-    }
-    if !last_err.is_empty() {
-        return Err(format!("Не удалось скачать нейросеть: {}", last_err));
-    }
-
-    let path = dest.to_path_buf();
-    let expected = sha256.to_ascii_lowercase();
-    let actual = tauri::async_runtime::spawn_blocking(move || sha256_file(&path))
+    let progress = |downloaded: u64, total: u64| emit_progress(app, stage, downloaded, total);
+    download::download_verified(client, url, dest, size, sha256, &progress)
         .await
-        .map_err(|e| e.to_string())??;
-    if actual != expected {
-        let _ = std::fs::remove_file(dest);
-        return Err(
-            "Скачанный файл повреждён (не совпала контрольная сумма). Попробуйте ещё раз."
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
-async fn download_resumable(
-    app: &AppHandle,
-    client: &reqwest::Client,
-    stage: &'static str,
-    url: &str,
-    dest: &Path,
-    size: u64,
-) -> Result<(), String> {
-    let mut have = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
-    if have > size {
-        let _ = std::fs::remove_file(dest);
-        have = 0;
-    }
-    if have == size {
-        emit_progress(app, stage, size, size);
-        return Ok(());
-    }
-
-    let mut req = client.get(url);
-    if have > 0 {
-        req = req.header(reqwest::header::RANGE, format!("bytes={}-", have));
-    }
-    let resp = req.send().await.map_err(|e| e.to_string())?;
-    let status = resp.status();
-    let append = match status.as_u16() {
-        206 if have > 0 => true,
-        200 => false,
-        416 => {
-            // Range not satisfiable: the partial file is unusable.
-            let _ = std::fs::remove_file(dest);
-            return Err("сервер отклонил докачку, начинаю заново".to_string());
-        }
-        _ => return Err(format!("ответ сервера {}", status)),
-    };
-    if !append {
-        have = 0;
-    }
-
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(append)
-        .truncate(!append)
-        .open(dest)
-        .await
-        .map_err(|e| format!("не удалось открыть {}: {}", dest.display(), e))?;
-
-    let mut stream = resp.bytes_stream();
-    let mut downloaded = have;
-    let mut last_emit = Instant::now()
-        .checked_sub(PROGRESS_INTERVAL)
-        .unwrap_or_else(Instant::now);
-    emit_progress(app, stage, downloaded, size);
-    loop {
-        let next = tokio::time::timeout(STALL_TIMEOUT, stream.next())
-            .await
-            .map_err(|_| "загрузка зависла (нет данных 60 с)".to_string())?;
-        let Some(chunk) = next else { break };
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        file.write_all(&chunk)
-            .await
-            .map_err(|e| format!("ошибка записи на диск: {}", e))?;
-        downloaded += chunk.len() as u64;
-        if downloaded > size {
-            drop(file);
-            let _ = std::fs::remove_file(dest);
-            return Err("файл больше ожидаемого".to_string());
-        }
-        if last_emit.elapsed() >= PROGRESS_INTERVAL {
-            emit_progress(app, stage, downloaded, size);
-            last_emit = Instant::now();
-        }
-    }
-    file.flush().await.map_err(|e| e.to_string())?;
-    drop(file);
-    emit_progress(app, stage, downloaded, size);
-    if downloaded != size {
-        return Err(format!("загружено {} из {} байт", downloaded, size));
-    }
-    Ok(())
-}
-
-pub(super) fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 1 << 20];
-    loop {
-        let n = f.read(&mut buf).map_err(|e| e.to_string())?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hex(&hasher.finalize()))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+        .map_err(|e| match e {
+            DownloadError::Transfer(e) => format!("Не удалось скачать нейросеть: {}", e),
+            DownloadError::Corrupt => {
+                "Скачанный файл повреждён (не совпала контрольная сумма). Попробуйте ещё раз."
+                    .to_string()
+            }
+            DownloadError::Io(e) => e,
+        })
 }
 
 /// Files from the release zip that `llama-server.exe` needs. Other tools
@@ -352,16 +214,5 @@ mod tests {
         assert!(wanted_runtime_file("llama-server-impl.dll"));
         assert!(wanted_runtime_file("llama-common.dll"));
         assert!(!wanted_runtime_file("llama-cli-impl.dll"));
-    }
-
-    #[test]
-    fn sha256_of_known_content() {
-        let dir = tempfile::tempdir().unwrap();
-        let f = dir.path().join("a.txt");
-        std::fs::write(&f, b"abc").unwrap();
-        assert_eq!(
-            sha256_file(&f).unwrap(),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
     }
 }

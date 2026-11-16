@@ -3,14 +3,17 @@
 //! segments, stores them in `meetings.db`, exports text and asks the local LLM
 //! for a short summary.
 //!
-//! Speakers (MVP): one per source — microphone → «Я», system → «Собеседник».
-//! TODO(diarization): split the system track into several remote speakers
-//! (e.g. a Sortformer/embedding model on the worker) and create additional
-//! `meeting_speakers` slots with `slot >= 2`.
+//! Speakers: microphone → «Я» (slot 0). The computer sound is one
+//! «Собеседник» (slot 1) unless the optional diarization model is installed;
+//! then the worker tells remote speakers apart («Собеседник 1…4», slots 1–4,
+//! see `diarize.rs` / `remote_speakers.rs`).
 
 pub mod capture;
 pub mod commands;
+pub mod diarize;
+pub mod diarizer_model;
 pub mod export;
+pub mod remote_speakers;
 pub mod session;
 pub mod store;
 pub mod types;
@@ -151,7 +154,8 @@ impl MeetingManager {
             }
             Err(message) => {
                 let _ = self.store.delete_meeting(shared.meeting_id);
-                let _ = std::fs::remove_dir_all(self.meetings_dir.join(shared.meeting_id.to_string()));
+                let _ =
+                    std::fs::remove_dir_all(self.meetings_dir.join(shared.meeting_id.to_string()));
                 if let Ok(mut active) = self.active.lock() {
                     *active = None;
                 }
@@ -171,7 +175,9 @@ impl MeetingManager {
         let audio_dir = self.meetings_dir.join(meeting_id.to_string());
         std::fs::create_dir_all(&audio_dir)
             .map_err(|e| format!("Не удалось создать папку совещания: {e}"))?;
-        let _ = self.store.set_audio_dir(meeting_id, &meeting_id.to_string());
+        let _ = self
+            .store
+            .set_audio_dir(meeting_id, &meeting_id.to_string());
 
         let vad_model_path = session::resolve_vad_model(&self.app)?;
         let selected_microphone = crate::settings::get_settings(&self.app).selected_microphone;
@@ -403,7 +409,9 @@ impl MeetingManager {
     pub fn discard(&self) -> Result<(), String> {
         let (shared, handles) = self.take_session()?;
         let meeting_id = shared.meeting_id;
-        shared.discard.store(true, std::sync::atomic::Ordering::Release);
+        shared
+            .discard
+            .store(true, std::sync::atomic::Ordering::Release);
         shared.set_state(MeetingState::Finalizing);
         self.emit_status();
 
@@ -528,5 +536,8 @@ impl MeetingManager {
 
 /// «Совещание 16.11.2026 14:05» in local time.
 fn default_title() -> String {
-    format!("Совещание {}", chrono::Local::now().format("%d.%m.%Y %H:%M"))
+    format!(
+        "Совещание {}",
+        chrono::Local::now().format("%d.%m.%Y %H:%M")
+    )
 }

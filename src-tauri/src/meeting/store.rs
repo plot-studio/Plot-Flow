@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::types::{
-    MeetingDetail, MeetingInfo, MeetingRecordStatus, MeetingSegment, MeetingSource,
-    MeetingSources, MeetingSpeaker,
+    MeetingDetail, MeetingInfo, MeetingRecordStatus, MeetingSegment, MeetingSource, MeetingSources,
+    MeetingSpeaker,
 };
 
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(2);
@@ -305,6 +305,40 @@ impl MeetingStore {
         Ok(segment)
     }
 
+    /// Move a (tentative) segment to another span and speaker — used when the
+    /// diarizer attributes it to a remote speaker or splits it. Returns the
+    /// updated row, or `None` when it no longer exists.
+    pub fn update_segment_span(
+        &self,
+        segment_id: i64,
+        t0_ms: u64,
+        t1_ms: u64,
+        speaker_id: Option<i64>,
+    ) -> Result<Option<MeetingSegment>> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE meeting_segments SET t0_ms = ?2, t1_ms = ?3, speaker_id = ?4 WHERE id = ?1",
+            params![segment_id, u64_to_sql(t0_ms), u64_to_sql(t1_ms), speaker_id],
+        )?;
+        let segment = conn
+            .query_row(
+                &format!("SELECT {SEGMENT_COLUMNS} FROM meeting_segments WHERE id = ?1"),
+                params![segment_id],
+                Self::map_segment,
+            )
+            .optional()?;
+        Ok(segment)
+    }
+
+    /// Change the default label of a speaker (the user-given name stays).
+    pub fn set_speaker_label(&self, speaker_id: i64, label: &str) -> Result<()> {
+        self.conn()?.execute(
+            "UPDATE meeting_speakers SET label = ?2 WHERE id = ?1",
+            params![speaker_id, label],
+        )?;
+        Ok(())
+    }
+
     /// Persist the running duration (called periodically so an interrupted
     /// meeting keeps a plausible length).
     pub fn update_duration(&self, meeting_id: i64, duration_ms: u64) -> Result<()> {
@@ -562,13 +596,23 @@ mod tests {
     #[test]
     fn create_list_and_detail_round_trip() {
         let (_dir, store) = open_temp();
-        let id = store.create_meeting("Test", 1_700_000_000_000, both()).unwrap();
+        let id = store
+            .create_meeting("Test", 1_700_000_000_000, both())
+            .unwrap();
         store.set_audio_dir(id, &id.to_string()).unwrap();
         let speaker = store
             .add_speaker(id, 0, MeetingSource::Microphone, "Я", 0)
             .unwrap();
         let tentative = store
-            .insert_segment(id, 1_000, 1_000, Some(speaker.id), MeetingSource::Microphone, "", false)
+            .insert_segment(
+                id,
+                1_000,
+                1_000,
+                Some(speaker.id),
+                MeetingSource::Microphone,
+                "",
+                false,
+            )
             .unwrap();
         assert!(!tentative.is_final);
         let final_seg = store
@@ -587,7 +631,12 @@ mod tests {
         assert!(list[0].sources.system_audio);
 
         store
-            .finish_meeting(id, 1_700_000_100_000, 100_000, MeetingRecordStatus::Completed)
+            .finish_meeting(
+                id,
+                1_700_000_100_000,
+                100_000,
+                MeetingRecordStatus::Completed,
+            )
             .unwrap();
         let detail = store.get_detail(id).unwrap().expect("detail");
         assert_eq!(detail.info.status, MeetingRecordStatus::Completed);
@@ -624,7 +673,15 @@ mod tests {
         assert!(store.rename_meeting(id + 100, "x").is_err());
 
         store
-            .insert_segment(id, 0, 10, Some(speaker.id), MeetingSource::System, "t", true)
+            .insert_segment(
+                id,
+                0,
+                10,
+                Some(speaker.id),
+                MeetingSource::System,
+                "t",
+                true,
+            )
             .unwrap();
         assert!(store.delete_meeting(id).unwrap());
         assert!(store.get_detail(id).unwrap().is_none());
@@ -675,6 +732,46 @@ mod tests {
         assert_eq!(segments[0].text, "x");
         assert!(segments[0].is_final);
         assert_eq!(info.segment_count, 1);
+    }
+
+    #[test]
+    fn segment_span_and_speaker_label_updates() {
+        let (_dir, store) = open_temp();
+        let id = store.create_meeting("d", 1, both()).unwrap();
+        let first = store
+            .add_speaker(id, 1, MeetingSource::System, "Собеседник", 1)
+            .unwrap();
+        let second = store
+            .add_speaker(id, 2, MeetingSource::System, "Собеседник 2", 2)
+            .unwrap();
+        let seg = store
+            .insert_segment(
+                id,
+                1_000,
+                9_000,
+                Some(first.id),
+                MeetingSource::System,
+                "",
+                false,
+            )
+            .unwrap();
+        let moved = store
+            .update_segment_span(seg.id, 4_000, 9_000, Some(second.id))
+            .unwrap()
+            .expect("segment exists");
+        assert_eq!((moved.t0_ms, moved.t1_ms), (4_000, 9_000));
+        assert_eq!(moved.speaker_id, Some(second.id));
+        assert!(store
+            .update_segment_span(seg.id + 99, 0, 1, None)
+            .unwrap()
+            .is_none());
+
+        store.rename_speaker(id, first.id, "Анна").unwrap();
+        store.set_speaker_label(first.id, "Собеседник 1").unwrap();
+        let speakers = store.list_speakers(id).unwrap();
+        assert_eq!(speakers[0].label, "Собеседник 1");
+        assert_eq!(speakers[0].name.as_deref(), Some("Анна"));
+        assert_eq!(speakers[1].slot, 2);
     }
 
     #[test]

@@ -97,12 +97,10 @@ pub(crate) fn classify_element(
         _ if value_read_only == Some(false) => FocusTarget::Editable,
         // Terminals and custom editors: a focused text surface.
         _ if text_focus => FocusTarget::Editable,
-        BUTTON | CALENDAR | CHECK_BOX | HYPERLINK | IMAGE | LIST_ITEM | LIST | MENU
-        | MENU_BAR | MENU_ITEM | PROGRESS_BAR | RADIO_BUTTON | SCROLL_BAR | SLIDER
-        | STATUS_BAR | TAB | TAB_ITEM | TOOL_BAR | TOOL_TIP | TREE | TREE_ITEM | THUMB
-        | DATA_GRID | DATA_ITEM | SPLIT_BUTTON | HEADER | HEADER_ITEM | TABLE | TITLE_BAR => {
-            FocusTarget::NotEditable
-        }
+        BUTTON | CALENDAR | CHECK_BOX | HYPERLINK | IMAGE | LIST_ITEM | LIST | MENU | MENU_BAR
+        | MENU_ITEM | PROGRESS_BAR | RADIO_BUTTON | SCROLL_BAR | SLIDER | STATUS_BAR | TAB
+        | TAB_ITEM | TOOL_BAR | TOOL_TIP | TREE | TREE_ITEM | THUMB | DATA_GRID | DATA_ITEM
+        | SPLIT_BUTTON | HEADER | HEADER_ITEM | TABLE | TITLE_BAR => FocusTarget::NotEditable,
         // Pane / Window / Group / Custom / Text…: custom-drawn apps often
         // report these for their editors, so don't claim "not editable".
         _ => FocusTarget::Unknown,
@@ -148,8 +146,8 @@ mod win {
         UIA_ValuePatternId,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId,
-        IsIconic, GUITHREADINFO,
+        GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, IsIconic,
+        GUITHREADINFO,
     };
 
     /// Upper bound for the UI Automation answer.
@@ -165,11 +163,7 @@ mod win {
     pub fn focused_text_target() -> FocusTarget {
         let started = Instant::now();
         let result = probe();
-        log::debug!(
-            "Focus probe: {:?} in {:?}",
-            result,
-            started.elapsed()
-        );
+        log::debug!("Focus probe: {:?} in {:?}", result, started.elapsed());
         result
     }
 
@@ -205,8 +199,7 @@ mod win {
                     cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
                     ..Default::default()
                 };
-                if GetGUIThreadInfo(thread_id, &mut info).is_ok() && !info.hwndCaret.is_invalid()
-                {
+                if GetGUIThreadInfo(thread_id, &mut info).is_ok() && !info.hwndCaret.is_invalid() {
                     return FocusTarget::Editable;
                 }
             }
@@ -319,7 +312,10 @@ mod tests {
             classify_element(control::EDIT, Some(false), true),
             FocusTarget::Editable
         );
-        assert_eq!(classify_element(control::EDIT, None, false), FocusTarget::Editable);
+        assert_eq!(
+            classify_element(control::EDIT, None, false),
+            FocusTarget::Editable
+        );
     }
 
     #[test]
@@ -362,10 +358,7 @@ mod tests {
     #[test]
     fn focused_text_surface_is_editable() {
         // e.g. a terminal: Text/Pane with TextPattern and keyboard focus.
-        assert_eq!(
-            classify_element(50033, None, true),
-            FocusTarget::Editable
-        );
+        assert_eq!(classify_element(50033, None, true), FocusTarget::Editable);
     }
 
     #[test]

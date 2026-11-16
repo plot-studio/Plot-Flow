@@ -563,9 +563,10 @@ impl ShortcutAction for TranscribeAction {
                     // arming animation on hardware that normally starts too fast
                     // to make it visible.
                     #[cfg(debug_assertions)]
-                    if let Ok(delay_ms) = crate::utils::env_var("PLOT_FLOW_DEBUG_MIC_READY_DELAY_MS")
-                        .unwrap_or_default()
-                        .parse::<u64>()
+                    if let Ok(delay_ms) =
+                        crate::utils::env_var("PLOT_FLOW_DEBUG_MIC_READY_DELAY_MS")
+                            .unwrap_or_default()
+                            .parse::<u64>()
                     {
                         let delay_ms = delay_ms.min(10_000);
                         if delay_ms > 0 {
@@ -731,15 +732,15 @@ impl ShortcutAction for TranscribeAction {
                     let transcription_result = match live_text {
                         Some(text) => Ok(text),
                         None => match tm.finalize_stream() {
-                        // A finalized stream with usable text wins. An empty result
-                        // (no active stream, produced nothing, or a finalize error
-                        // after the engine was returned) falls back to a full batch
-                        // transcription of the same audio. A finalize timeout is
-                        // surfaced instead — the worker may still hold the engine,
-                        // so a batch fallback would contend with it.
-                        Ok(Some(text)) if !text.trim().is_empty() => Ok(text),
-                        Ok(_) => tm.transcribe(samples),
-                        Err(err) => Err(err),
+                            // A finalized stream with usable text wins. An empty result
+                            // (no active stream, produced nothing, or a finalize error
+                            // after the engine was returned) falls back to a full batch
+                            // transcription of the same audio. A finalize timeout is
+                            // surfaced instead — the worker may still hold the engine,
+                            // so a batch fallback would contend with it.
+                            Ok(Some(text)) if !text.trim().is_empty() => Ok(text),
+                            Ok(_) => tm.transcribe(samples),
+                            Err(err) => Err(err),
                         },
                     };
 
