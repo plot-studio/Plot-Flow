@@ -24,6 +24,7 @@ import { BundledModelStatus } from "./components/BundledModelStatus";
 import { useBundledModel } from "./hooks/useBundledModel";
 import { withTimeout } from "./lib/bundledModel";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
+import { MeetingPanelSlot } from "./components/meeting";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
@@ -320,6 +321,7 @@ function App() {
               </div>
             </div>
           </div>
+          <MeetingPanelSlot />
         </div>
         {/* Fixed footer at bottom */}
         <Footer />

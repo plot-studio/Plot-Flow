@@ -516,6 +516,9 @@ impl ShortcutAction for TranscribeAction {
         };
         if model_supports_streaming {
             tm.start_stream();
+        } else if settings.live_insert && !self.post_process {
+            // Paste phrase by phrase while the user is still speaking.
+            tm.start_live_insert();
         }
         let plan_elapsed = plan_started.elapsed();
 
@@ -720,7 +723,14 @@ impl ShortcutAction for TranscribeAction {
                     // running, finalize it and use its text (all audio was already
                     // fed to the stream); otherwise batch-transcribe the samples.
                     let transcription_time = Instant::now();
-                    let transcription_result = match tm.finalize_stream() {
+                    // Live insert already pasted the text phrase by phrase:
+                    // only the remainder is recognized and pasted here, and the
+                    // full text goes to history/statistics without a second paste.
+                    let live_text = tm.finalize_live_insert();
+                    let already_pasted = live_text.is_some();
+                    let transcription_result = match live_text {
+                        Some(text) => Ok(text),
+                        None => match tm.finalize_stream() {
                         // A finalized stream with usable text wins. An empty result
                         // (no active stream, produced nothing, or a finalize error
                         // after the engine was returned) falls back to a full batch
@@ -730,6 +740,7 @@ impl ShortcutAction for TranscribeAction {
                         Ok(Some(text)) if !text.trim().is_empty() => Ok(text),
                         Ok(_) => tm.transcribe(samples),
                         Err(err) => Err(err),
+                        },
                     };
 
                     // Await WAV save and verify
@@ -811,7 +822,18 @@ impl ShortcutAction for TranscribeAction {
                                 }
                             }
 
-                            if processed.final_text.is_empty() {
+                            if already_pasted {
+                                // Text is already in the target field.
+                                if word_count > 0 {
+                                    if let Some(statistics) =
+                                        ah.try_state::<Arc<StatisticsManager>>()
+                                    {
+                                        statistics.record(word_count, audio_ms, statistics_day);
+                                    }
+                                }
+                                utils::hide_recording_overlay(&ah);
+                                set_tray_state(&ah, TrayIconState::Idle);
+                            } else if processed.final_text.is_empty() {
                                 utils::hide_recording_overlay(&ah);
                                 set_tray_state(&ah, TrayIconState::Idle);
                             } else {

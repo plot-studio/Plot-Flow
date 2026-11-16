@@ -494,6 +494,10 @@ pub struct AppSettings {
     /// amplify very quiet recordings in software before recognition.
     #[serde(default = "default_auto_mic_gain")]
     pub auto_mic_gain: bool,
+    /// Paste each phrase as soon as the speaker pauses instead of the whole
+    /// dictation at the end (models that cannot stream, i.e. GigaAM).
+    #[serde(default = "default_live_insert")]
+    pub live_insert: bool,
     #[serde(default)]
     pub transcribe_accelerator: TranscribeAcceleratorSetting,
     #[serde(default)]
@@ -593,6 +597,10 @@ fn default_filler_word_removal_enabled() -> bool {
 }
 
 fn default_auto_mic_gain() -> bool {
+    true
+}
+
+fn default_live_insert() -> bool {
     true
 }
 
@@ -975,6 +983,7 @@ pub fn get_default_settings() -> AppSettings {
         filler_word_removal_enabled: default_filler_word_removal_enabled(),
         custom_filler_words: None,
         auto_mic_gain: default_auto_mic_gain(),
+        live_insert: default_live_insert(),
         transcribe_accelerator: TranscribeAcceleratorSetting::default(),
         ort_accelerator: OrtAcceleratorSetting::default(),
         transcribe_gpu_device: default_transcribe_gpu_device(),

@@ -11,7 +11,9 @@ mod commands;
 mod helpers;
 mod input;
 mod llm_client;
+pub mod llm_local;
 mod managers;
+pub mod meeting;
 mod memory;
 mod overlay;
 mod paste_tx;
@@ -223,6 +225,12 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             app_handle.manage(Arc::new(manager));
         }
         Err(err) => log::error!("Failed to initialize usage statistics: {}", err),
+    }
+    match meeting::MeetingManager::new(app_handle) {
+        Ok(manager) => {
+            app_handle.manage(Arc::new(manager));
+        }
+        Err(err) => log::error!("Failed to initialize meeting mode: {}", err),
     }
     app_handle.manage(tray::TrayState::new());
 
@@ -710,6 +718,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_vad_backend_setting,
             shortcut::change_filler_word_removal_enabled_setting,
             shortcut::change_auto_mic_gain_setting,
+            shortcut::change_live_insert_setting,
             shortcut::change_app_language_setting,
             shortcut::change_update_checks_setting,
             shortcut::change_show_whats_new_on_update_setting,
@@ -780,6 +789,22 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
             helpers::clamshell::is_laptop,
+            meeting::commands::meeting_start,
+            meeting::commands::meeting_stop,
+            meeting::commands::meeting_pause,
+            meeting::commands::meeting_resume,
+            meeting::commands::meeting_discard,
+            meeting::commands::meeting_status,
+            meeting::commands::meeting_list,
+            meeting::commands::meeting_get,
+            meeting::commands::meeting_rename,
+            meeting::commands::meeting_rename_speaker,
+            meeting::commands::meeting_delete,
+            meeting::commands::meeting_export,
+            meeting::commands::meeting_set_panel,
+            meeting::commands::meeting_summarize,
+            llm_local::llm_status,
+            llm_local::llm_install,
         ])
         .events(collect_events![
             managers::history::HistoryUpdatePayload,
@@ -1137,6 +1162,8 @@ pub fn run(cli_args: CliArgs) {
             if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                 let _ = tm.unload_model();
             }
+            // Free the local LLM's VRAM/RAM: kill the hidden llama-server.
+            llm_local::shutdown();
         }
         _ => {}
     });

@@ -72,7 +72,8 @@
     "postProcessing": "Post Process",
     "history": "History",
     "debug": "Debug",
-    "about": "About"
+    "about": "About",
+    "meeting": "Meeting"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -216,6 +217,10 @@
     },
     "general": {
       "title": "General",
+      "liveInsert": {
+        "title": "Insert Text While Speaking",
+        "description": "Each phrase is recognized and pasted as soon as you pause — no waiting for the recording to end. Turn off to paste everything at once after stopping."
+      },
       "shortcut": {
         "title": "Plot Flow Shortcuts",
         "description": "Configure keyboard shortcuts to trigger speech-to-text recording",
@@ -776,6 +781,29 @@
   },
   "meeting": {
     "title": "Meeting",
+    "panel": {
+      "hide": "Hide panel",
+      "show": "Show panel",
+      "close": "Close panel",
+      "live": "Live",
+      "speakerHint": "Click to rename"
+    },
+    "summary": {
+      "button": "Summary",
+      "title": "Summary",
+      "running": "The local model is preparing the summary…",
+      "regenerate": "Regenerate",
+      "needModel": "A local model is required (~2.5 GB, downloaded once)",
+      "needModelHint": "Everything stays on this computer; nothing is sent to the internet.",
+      "install": "Download model",
+      "installing": "Downloading…",
+      "stageServer": "Engine",
+      "stageModel": "Model",
+      "installFailed": "Could not download the model",
+      "installDone": "Local model is ready",
+      "failed": "Could not prepare the summary",
+      "empty": "The transcript is empty, nothing to summarize yet."
+    },
     "subtitle": "Record a call or a conversation and get a transcript with speakers.",
     "start": "Start recording",
     "stop": "Stop",

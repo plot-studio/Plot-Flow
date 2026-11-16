@@ -375,6 +375,14 @@ async changeVadBackendSetting(backend: VadBackend) : Promise<Result<null, string
     else return { status: "error", error: e  as any };
 }
 },
+async changeLiveInsertSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_live_insert_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeAutoMicGainSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_auto_mic_gain_setting", { enabled }) };
@@ -1024,6 +1032,38 @@ async meetingExport(meetingId: number, format: MeetingExportFormat) : Promise<Re
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async meetingSetPanel(open: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_set_panel", { open }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingSummarize(meetingId: number) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_summarize", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmStatus() : Promise<Result<LlmStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async llmInstall() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_install") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1092,7 +1132,7 @@ selected_channel?: number | null; clamshell_microphone?: string | null; selected
  * after the target app actually reads the transcript, instead of after a
  * fixed delay. See `paste_tx`. macOS and Windows only.
  */
-reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; auto_mic_gain?: boolean; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting;
+reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; auto_mic_gain?: boolean; live_insert?: boolean; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting;
 /**
  * Stable transcribe.cpp device selector. This is derived from the backend's
  * `device_id` when available (or its name for backends such as Metal),
@@ -1296,6 +1336,7 @@ export type MeetingSpeaker = { id: number; meeting_id: number; slot: number; sou
 export type MeetingSegment = { id: number; meeting_id: number; t0_ms: number; t1_ms: number; speaker_id: number | null; source: MeetingSource; text: string; is_final: boolean }
 export type MeetingDetail = { info: MeetingInfo; speakers: MeetingSpeaker[]; segments: MeetingSegment[] }
 export type MeetingExportFormat = "txt" | "md" | "json" | "srt"
+export type LlmStatus = { installed: boolean; server_running: boolean; model_name: string; model_size_mb: number; installing: boolean }
 
 /** tauri-specta globals **/
 

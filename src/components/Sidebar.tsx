@@ -1,8 +1,9 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { ChartNoAxesCombined, History, Mic } from "lucide-react";
+import { ChartNoAxesCombined, History, Mic, Users } from "lucide-react";
 
 import { SettingsPage, StatisticsSettings, HistorySettings } from "./settings";
+import { MeetingPage } from "./meeting";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -26,6 +27,12 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.settings",
     icon: Mic,
     component: SettingsPage,
+    enabled: () => true,
+  },
+  meeting: {
+    labelKey: "sidebar.meeting",
+    icon: Users,
+    component: MeetingPage,
     enabled: () => true,
   },
   history: {

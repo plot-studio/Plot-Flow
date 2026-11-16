@@ -126,6 +126,10 @@ pub struct StreamRouter {
     /// True while a stream is pending or active (channel is open). The audio
     /// callback checks this first to avoid the mutex lock when no stream runs.
     open: Arc<AtomicBool>,
+    /// Frame channel of the live-insert worker (phrase-by-phrase pasting for
+    /// models that cannot stream), present while such a recording runs.
+    live_tx: Mutex<Option<mpsc::Sender<Vec<f32>>>>,
+    live_open: AtomicBool,
 }
 
 impl StreamRouter {
@@ -133,7 +137,22 @@ impl StreamRouter {
         Self {
             tx: Mutex::new(None),
             open: Arc::new(AtomicBool::new(false)),
+            live_tx: Mutex::new(None),
+            live_open: AtomicBool::new(false),
         }
+    }
+
+    /// Route frames to a live-insert worker until [`Self::close_live`].
+    fn open_live(&self, tx: mpsc::Sender<Vec<f32>>) {
+        *self.live_tx.lock().unwrap() = Some(tx);
+        self.live_open.store(true, Ordering::Relaxed);
+    }
+
+    /// Stop routing frames to the live-insert worker (drops its sender, which
+    /// tells the worker that no more audio will come).
+    fn close_live(&self) {
+        self.live_open.store(false, Ordering::Relaxed);
+        *self.live_tx.lock().unwrap() = None;
     }
 
     /// Open a fresh command channel for a new streaming session, returning the
@@ -163,6 +182,11 @@ impl StreamRouter {
     /// Forward a 16 kHz frame to the active streaming worker. Cheap no-op (a
     /// single relaxed atomic load) when no stream is pending.
     pub fn feed(&self, frame: &[f32]) {
+        if self.live_open.load(Ordering::Relaxed) {
+            if let Some(tx) = self.live_tx.lock().unwrap().as_ref() {
+                let _ = tx.send(frame.to_vec());
+            }
+        }
         if !self.open.load(Ordering::Relaxed) {
             return;
         }
@@ -278,6 +302,10 @@ pub struct TranscriptionManager {
     /// `is_model_loaded()` consults this so the model still reports "loaded"
     /// while the worker holds it.
     active_engine_lease: Arc<AtomicU64>,
+    /// The running live-insert worker, if any: its result channel.
+    live_insert: Arc<Mutex<Option<mpsc::Receiver<String>>>>,
+    /// Set to abandon the live-insert worker without a final flush (cancel).
+    live_insert_cancel: Arc<AtomicBool>,
 }
 
 impl TranscriptionManager {
@@ -298,6 +326,8 @@ impl TranscriptionManager {
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
             active_engine_lease: Arc::new(AtomicU64::new(0)),
+            live_insert: Arc::new(Mutex::new(None)),
+            live_insert_cancel: Arc::new(AtomicBool::new(false)),
         };
 
         // Start the idle watcher
@@ -1150,11 +1180,66 @@ impl TranscriptionManager {
     }
 
     /// Abandon any active stream without producing text (e.g. on cancel).
+    /// Also stops a live-insert worker (phrases already pasted stay pasted).
     pub fn cancel_stream(&self) {
         if let Some(tx) = self.router.take() {
             let _ = tx.send(StreamCmd::Cancel);
         }
         self.stream_active.store(false, Ordering::Release);
+        self.cancel_live_insert();
+    }
+
+    /// Start "live insert" for this recording: every phrase is recognized as
+    /// soon as the speaker pauses and pasted immediately, instead of the whole
+    /// dictation at the end. Meant for models that cannot stream (GigaAM).
+    pub fn start_live_insert(&self) {
+        let mut slot = self.live_insert.lock().unwrap();
+        if slot.is_some() {
+            warn!("start_live_insert called while a live-insert worker is active");
+            return;
+        }
+        let (frame_tx, frame_rx) = mpsc::channel::<Vec<f32>>();
+        let (result_tx, result_rx) = mpsc::channel::<String>();
+        self.live_insert_cancel.store(false, Ordering::Release);
+        self.router.open_live(frame_tx);
+        *slot = Some(result_rx);
+        let manager = self.clone();
+        thread::spawn(move || {
+            let text = crate::managers::live_insert::run(&manager, frame_rx);
+            let _ = result_tx.send(text);
+        });
+        info!("Live insert started: phrases are pasted at each pause");
+    }
+
+    /// End live insert: recognize and paste what is left, and return the whole
+    /// text that was pasted during this recording. `None` when live insert was
+    /// not running.
+    pub fn finalize_live_insert(&self) -> Option<String> {
+        let rx = self.live_insert.lock().unwrap().take()?;
+        self.router.close_live();
+        match rx.recv_timeout(Duration::from_secs(180)) {
+            Ok(text) => Some(text),
+            Err(e) => {
+                error!("Live insert did not finish: {e}");
+                Some(String::new())
+            }
+        }
+    }
+
+    fn cancel_live_insert(&self) {
+        if self.live_insert.lock().unwrap().take().is_some() {
+            self.live_insert_cancel.store(true, Ordering::Release);
+            self.router.close_live();
+            debug!("Live insert cancelled");
+        }
+    }
+
+    pub(crate) fn live_insert_cancelled(&self) -> bool {
+        self.live_insert_cancel.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn app_handle(&self) -> &AppHandle {
+        &self.app_handle
     }
 
     /// Emit a working-phase event to the streaming overlay (spinner + label).

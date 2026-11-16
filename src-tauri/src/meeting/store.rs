@@ -415,6 +415,36 @@ impl MeetingStore {
         Ok(())
     }
 
+    /// Store (or clear) the LLM summary of a meeting.
+    pub fn set_summary(&self, meeting_id: i64, summary: Option<&str>) -> Result<()> {
+        let changed = self.conn()?.execute(
+            "UPDATE meetings SET summary = ?2 WHERE id = ?1",
+            params![meeting_id, summary],
+        )?;
+        if changed == 0 {
+            return Err(anyhow!("Meeting {meeting_id} not found"));
+        }
+        Ok(())
+    }
+
+    /// Remove one segment (used when recognition produced no text).
+    pub fn delete_segment(&self, segment_id: i64) -> Result<()> {
+        self.conn()?.execute(
+            "DELETE FROM meeting_segments WHERE id = ?1",
+            params![segment_id],
+        )?;
+        Ok(())
+    }
+
+    /// Remove one speaker slot (used when its source failed to open).
+    pub fn delete_speaker(&self, speaker_id: i64) -> Result<()> {
+        self.conn()?.execute(
+            "DELETE FROM meeting_speakers WHERE id = ?1",
+            params![speaker_id],
+        )?;
+        Ok(())
+    }
+
     /// Relative audio directory recorded for a meeting.
     pub fn audio_dir(&self, meeting_id: i64) -> Result<Option<String>> {
         let conn = self.conn()?;
@@ -578,6 +608,23 @@ mod tests {
         assert!(store.get_detail(id).unwrap().is_none());
         assert!(store.list_segments(id).unwrap().is_empty());
         assert!(!store.delete_meeting(id).unwrap());
+    }
+
+    #[test]
+    fn summary_and_segment_removal() {
+        let (_dir, store) = open_temp();
+        let id = store.create_meeting("s", 1, both()).unwrap();
+        store.set_summary(id, Some("итог")).unwrap();
+        assert_eq!(
+            store.get_info(id).unwrap().unwrap().summary.as_deref(),
+            Some("итог")
+        );
+        let seg = store
+            .insert_segment(id, 0, 10, None, MeetingSource::Microphone, "", false)
+            .unwrap();
+        store.delete_segment(seg.id).unwrap();
+        assert!(store.list_segments(id).unwrap().is_empty());
+        assert!(store.set_summary(id + 1, None).is_err());
     }
 
     #[test]
