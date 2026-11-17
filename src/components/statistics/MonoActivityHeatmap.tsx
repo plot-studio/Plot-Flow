@@ -252,21 +252,6 @@ export function MonoActivityHeatmap({
             ))}
           </div>
 
-          {/* Active Cell Tooltip Callout */}
-          <div
-            data-heatmap-footer
-            className="relative h-4 w-full shrink-0 flex items-center justify-center"
-          >
-            {hoveredDay ? (
-              <span className="text-[10px] sm:text-[11px] font-mono font-medium text-text">
-                {hoveredDay.date}
-              </span>
-            ) : (
-              <span className="text-[10px] font-mono opacity-60 text-text-muted">
-                {t("statistics.heatmapHint")}
-              </span>
-            )}
-          </div>
         </div>
       </motion.div>
       {hoveredDay &&

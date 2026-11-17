@@ -103,6 +103,14 @@ export function MonoRoundedLineChart({
     metric === "words"
       ? value.toLocaleString(i18n.language)
       : formatAudioDuration(value);
+  // Axis ticks must fit the narrow axis column: "26 тыс." / "1 ч" style.
+  const formatAxis = (value: number) =>
+    metric === "words"
+      ? new Intl.NumberFormat(i18n.language, {
+          notation: "compact",
+          maximumFractionDigits: 1,
+        }).format(value)
+      : formatAudioDuration(value);
   return (
     <motion.div
       data-chart="rounded-line"
@@ -202,7 +210,7 @@ export function MonoRoundedLineChart({
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={currentData}
-            margin={{ top: 10, right: 12, left: -24, bottom: 0 }}
+            margin={{ top: 10, right: 12, left: 0, bottom: 0 }}
           >
             <CartesianGrid
               strokeDasharray="3 3"
@@ -217,7 +225,8 @@ export function MonoRoundedLineChart({
             />
             <YAxis
               domain={[0, "auto"]}
-              tickFormatter={formatValue}
+              tickFormatter={formatAxis}
+              width={metric === "words" ? 44 : 52}
               tickLine={false}
               axisLine={false}
               tick={{ fontSize: 9.5, fill: isDark ? "#71717A" : "#A1A1AA" }}

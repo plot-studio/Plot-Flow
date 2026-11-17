@@ -168,10 +168,7 @@ export function StatisticsSettings() {
                 "day",
                 i18n.language,
               ),
-            })}{" "}
-            · {t("statistics.audioNote")}
-            {data.records_complete !== true &&
-              ` · ${t("statistics.recordsNote")}`}
+            })}
           </p>
         </>
       )}
