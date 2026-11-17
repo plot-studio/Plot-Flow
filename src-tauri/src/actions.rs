@@ -832,6 +832,17 @@ impl ShortcutAction for TranscribeAction {
                                         statistics.record(word_count, audio_ms, statistics_day);
                                     }
                                 }
+                                // Safety net: whatever happened to the
+                                // individual pastes, the whole dictation is
+                                // now on the clipboard for a manual Ctrl+V.
+                                if !processed.final_text.is_empty() {
+                                    if let Err(e) = crate::clipboard::copy_text_to_clipboard(
+                                        &ah,
+                                        &processed.final_text,
+                                    ) {
+                                        warn!("Cannot leave the dictation on the clipboard: {e}");
+                                    }
+                                }
                                 // Keeps the "saved — Ctrl+V" notice up if smart
                                 // insert held a phrase during the recording.
                                 crate::smart_insert::finish_overlay(&ah);
@@ -867,10 +878,24 @@ impl ShortcutAction for TranscribeAction {
                                     crate::smart_insert::begin_session();
                                     match crate::smart_insert::deliver(&ah_clone, &final_text, "")
                                     {
-                                        crate::smart_insert::Delivery::Pasted => debug!(
-                                            "Text pasted successfully in {:?}",
-                                            paste_time.elapsed()
-                                        ),
+                                        crate::smart_insert::Delivery::Pasted => {
+                                            debug!(
+                                                "Text pasted successfully in {:?}",
+                                                paste_time.elapsed()
+                                            );
+                                            // Safety net: if the target missed the
+                                            // paste, Ctrl+V still inserts it.
+                                            if let Err(e) =
+                                                crate::clipboard::copy_text_to_clipboard(
+                                                    &ah_clone,
+                                                    &final_text,
+                                                )
+                                            {
+                                                warn!(
+                                                    "Cannot leave the dictation on the clipboard: {e}"
+                                                );
+                                            }
+                                        }
                                         crate::smart_insert::Delivery::Held => debug!(
                                             "Text held for Ctrl+V: the cursor is not in a text field"
                                         ),

@@ -535,7 +535,7 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 4;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 5;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -632,7 +632,10 @@ fn default_paste_delay_ms() -> u64 {
 }
 
 fn default_paste_delay_after_ms() -> u64 {
-    10
+    // Restoring the previous clipboard 10 ms after Ctrl+V raced slower
+    // targets (Electron/Chromium read the clipboard asynchronously): they
+    // received the old clipboard and the dictation silently "didn't paste".
+    150
 }
 
 fn default_auto_submit() -> bool {
@@ -1263,6 +1266,17 @@ fn apply_settings_migrations(
         updated = true;
     }
 
+    if stored_schema_version < 5 {
+        // Live insert pastes many times per recording; with a 10 ms clipboard
+        // restore some pastes landed the *old* clipboard in slower apps.
+        // Widen the restore delay once (keep any larger user value).
+        settings.paste_delay_after_ms = settings
+            .paste_delay_after_ms
+            .max(default_paste_delay_after_ms());
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        updated = true;
+    }
+
     // The generic GPU choice was removed in favor of Auto or an exact device.
     // Normalize settings created by builds that exposed that short-lived option.
     if settings.transcribe_accelerator == TranscribeAcceleratorSetting::Gpu
@@ -1363,7 +1377,7 @@ mod tests {
         let old = serde_json::to_value(&settings).unwrap();
         assert!(apply_settings_migrations(&mut settings, &old));
         assert_eq!(settings.paste_delay_ms, 10);
-        assert_eq!(settings.paste_delay_after_ms, 10);
+        assert_eq!(settings.paste_delay_after_ms, 150);
         assert_eq!(settings.model_unload_timeout, ModelUnloadTimeout::Never);
         assert!(!settings.start_hidden);
         assert!(!settings.autostart_enabled);
@@ -1372,6 +1386,23 @@ mod tests {
         let current = serde_json::to_value(&settings).unwrap();
         assert!(!apply_settings_migrations(&mut settings, &current));
         assert_eq!(settings.model_unload_timeout, ModelUnloadTimeout::Min2);
+    }
+
+    #[test]
+    fn paste_restore_delay_is_widened_once_and_keeps_larger_values() {
+        let mut settings = get_default_settings();
+        settings.settings_schema_version = 4;
+        settings.paste_delay_after_ms = 10;
+        let old = serde_json::to_value(&settings).unwrap();
+        assert!(apply_settings_migrations(&mut settings, &old));
+        assert_eq!(settings.paste_delay_after_ms, 150);
+
+        let mut larger = get_default_settings();
+        larger.settings_schema_version = 4;
+        larger.paste_delay_after_ms = 400;
+        let old = serde_json::to_value(&larger).unwrap();
+        assert!(apply_settings_migrations(&mut larger, &old));
+        assert_eq!(larger.paste_delay_after_ms, 400);
     }
 
     #[test]
@@ -1390,7 +1421,7 @@ mod tests {
         assert!(settings.start_hidden);
         assert!(settings.autostart_enabled);
         assert_eq!(settings.paste_delay_ms, 10);
-        assert_eq!(settings.paste_delay_after_ms, 10);
+        assert_eq!(settings.paste_delay_after_ms, 150);
         assert_eq!(settings.model_unload_timeout, ModelUnloadTimeout::Never);
         assert_eq!(settings.history_limit, 5);
         assert!(!settings.experimental_enabled);
