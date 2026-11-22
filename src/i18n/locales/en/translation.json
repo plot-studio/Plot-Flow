@@ -226,6 +226,13 @@
     },
     "general": {
       "title": "General",
+      "menuKey": {
+        "title": "Menu Key",
+        "description": "Record with the menu key — right of the space bar, next to right Ctrl. No extra tools needed.",
+        "action": "Use",
+        "active": "In use",
+        "done": "Recording now uses the menu key"
+      },
       "liveInsert": {
         "title": "Insert text as you speak",
         "description": "Each phrase appears right after you pause, without waiting for the end."

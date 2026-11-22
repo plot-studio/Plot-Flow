@@ -572,3 +572,22 @@ pub fn stop_native_keys_recording(app: AppHandle) -> Result<(), String> {
     super::resume_all_shortcuts(&app);
     result
 }
+
+#[cfg(test)]
+mod menu_key_tests {
+    use super::validate_shortcut;
+
+    #[test]
+    fn context_menu_key_is_a_valid_shortcut() {
+        assert!(validate_shortcut("contextmenu").is_ok());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_default_dictation_key_is_the_menu_key() {
+        let defaults = crate::settings::get_default_settings();
+        let binding = &defaults.bindings["transcribe"];
+        assert_eq!(binding.default_binding, "contextmenu");
+        assert!(validate_shortcut(&binding.default_binding).is_ok());
+    }
+}

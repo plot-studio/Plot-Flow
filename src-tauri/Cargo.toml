@@ -1,6 +1,6 @@
 [package]
 name = "plot-flow"
-version = "1.7.2"
+version = "1.7.3"
 description = "Plot Flow"
 authors = ["Plot Studio"]
 edition = "2021"

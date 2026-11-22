@@ -7,6 +7,7 @@ import { PRESS_SCALE, SPRING, SPRING_SNAPPY } from "@/lib/motion";
 import { useSettings } from "@/hooks/useSettings";
 import { SettingsGroup } from "../ui/SettingsGroup";
 import { ShortcutInput } from "./ShortcutInput";
+import { MenuKeyShortcut } from "./MenuKeyShortcut";
 import { ShortcutActivationSetting } from "./ShortcutActivation";
 import { LiveInsert } from "./LiveInsert";
 import { SmartInsert } from "./SmartInsert";
@@ -73,6 +74,7 @@ export function SettingsPage() {
           descriptionMode="inline"
           grouped
         />
+        {!isLinux && <MenuKeyShortcut descriptionMode="inline" grouped />}
         <ShortcutActivationSetting descriptionMode="inline" grouped />
         <LiveInsert descriptionMode="inline" grouped />
         <SmartInsert descriptionMode="inline" grouped />

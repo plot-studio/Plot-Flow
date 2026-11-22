@@ -160,6 +160,9 @@ export const getKeyName = (
 const capitalizeKey = (key: string): string => {
   // fn key: keep lowercase
   if (key === "fn") return "fn";
+  // Context-menu key (right of the space bar)
+  if (["contextmenu", "menu", "apps", "application"].includes(key))
+    return "Меню";
   // Function keys: f1 -> F1
   if (/^f\d+$/.test(key)) return key.toUpperCase();
   // Single char: a -> A
